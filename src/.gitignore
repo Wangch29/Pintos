@@ -5,4 +5,4 @@ tags
 *.a
 *.o
 .*.swp
-.idea/
+.idea
