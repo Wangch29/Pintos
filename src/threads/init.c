@@ -136,6 +136,7 @@ pintos_init (void)
     // TODO: no command line passed to kernel. Run interactively
     const size_t cmd_max = 100;
     uint8_t *cmd = malloc(cmd_max*sizeof(uint8_t));
+
     while (1) {
       memset(cmd, 0, cmd_max);
       size_t num = 0;
@@ -161,6 +162,7 @@ pintos_init (void)
           break;
       }
     }
+
     free(cmd);
     printf("Leaving the shell...\n");
   }
