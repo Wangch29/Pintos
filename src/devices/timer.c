@@ -214,7 +214,6 @@ sleep_tick (void)
         {
           i = list_remove(i);
           thread_unblock (sleeper->thread_elem);
-          //free(sleeper);
         } else {
           i = list_next(i);
         }
