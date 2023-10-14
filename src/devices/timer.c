@@ -214,6 +214,9 @@ sleep_tick (void)
         {
           i = list_remove(i);
           thread_unblock (sleeper->thread_elem);
+          /* If the woken thread have higher priority, yield. */
+          if (sleeper->thread_elem->priority > thread_current ()->priority)
+            intr_yield_on_return ();
         } else {
           i = list_next(i);
         }

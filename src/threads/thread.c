@@ -167,7 +167,6 @@ thread_create (const char *name, int priority,
                thread_func *function, void *aux) 
 {
   struct thread *t;
-  struct thread *cur_t;
   struct kernel_thread_frame *kf;
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
@@ -203,9 +202,8 @@ thread_create (const char *name, int priority,
   thread_unblock (t);
 
   /* Yield, when new created thread has higher priority
-                                       than current threads */
-  cur_t = running_thread ();
-  if (priority > cur_t->priority)
+    than current threads */
+  if (priority > thread_current ()->priority)
     thread_yield ();
 
   return tid;
@@ -227,14 +225,6 @@ thread_block (void)
   schedule ();
 }
 
-static int8_t
-compare_priority (struct list_elem *elem, struct list_elem *e) {
-  if (list_entry(elem, struct thread, elem)->priority >
-          list_entry(e, struct thread, elem)->priority)
-      return 1;
-  return 0;
-}
-
 /** Transitions a blocked thread T to the ready-to-run state.
    This is an error if T is not blocked.  (Use thread_yield() to
    make the running thread ready.)
@@ -252,7 +242,7 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_insert_ordered (&ready_list, &t->elem, *compare_priority, NULL);
+  list_insert_ordered (&ready_list, &t->elem, &thread_compare_priority, NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -323,7 +313,8 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread)
-    list_insert_ordered (&ready_list, &cur->elem, *compare_priority, NULL);
+    list_insert_ordered (&ready_list, &cur->elem,
+                         &thread_compare_priority, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -350,7 +341,13 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+  int old_priority = thread_get_priority();
   thread_current ()->priority = new_priority;
+
+  /* When lowering priority, if new_priority is not the highest,
+    yield immediately. */
+  if (old_priority > new_priority)
+    thread_yield();
 }
 
 /** Returns the current thread's priority. */
@@ -358,6 +355,23 @@ int
 thread_get_priority (void) 
 {
   return thread_current ()->priority;
+}
+
+/** Compare the priority between two threads.
+ *
+ * @param e1 - the list_elem that the first thread contains.
+ * @param e2 - the list_elem that the second thread contains.
+ * @return 1 if thread1 have higher priority; 0 otherwise.
+ */
+bool
+thread_compare_priority (const struct list_elem *e1,
+                         const struct list_elem *e2,
+                         void *aux UNUSED)
+{
+  if (list_entry(e1, struct thread, elem)->priority >
+          list_entry(e2, struct thread, elem)->priority)
+      return 1;
+  return 0;
 }
 
 /** Sets the current thread's nice value to NICE. */
