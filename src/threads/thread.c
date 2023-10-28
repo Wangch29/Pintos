@@ -20,6 +20,9 @@
    of thread.h for details. */
 #define THREAD_MAGIC 0xcd6abf4b
 
+/** The maximum depth of nested priority donation. */
+#define NESTED_DONATE_DEPTH 8
+
 /** List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
@@ -38,7 +41,7 @@ static struct thread *initial_thread;
 static struct lock tid_lock;
 
 /** Stack frame for kernel_thread(). */
-struct kernel_thread_frame 
+struct kernel_thread_frame
   {
     void *eip;                  /**< Return address. */
     thread_func *function;      /**< Function to call. */
@@ -85,7 +88,7 @@ static tid_t allocate_tid (void);
    It is not safe to call thread_current() until this function
    finishes. */
 void
-thread_init (void) 
+thread_init (void)
 {
   ASSERT (intr_get_level () == INTR_OFF);
 
@@ -103,7 +106,7 @@ thread_init (void)
 /** Starts preemptive thread scheduling by enabling interrupts.
    Also creates the idle thread. */
 void
-thread_start (void) 
+thread_start (void)
 {
   /* Create the idle thread. */
   struct semaphore idle_started;
@@ -141,7 +144,7 @@ thread_tick (void)
 
 /** Prints thread statistics. */
 void
-thread_print_stats (void) 
+thread_print_stats (void)
 {
   printf ("Thread: %lld idle ticks, %lld kernel ticks, %lld user ticks\n",
           idle_ticks, kernel_ticks, user_ticks);
@@ -164,7 +167,7 @@ thread_print_stats (void)
    Priority scheduling is the goal of Problem 1-3. */
 tid_t
 thread_create (const char *name, int priority,
-               thread_func *function, void *aux) 
+               thread_func *function, void *aux)
 {
   struct thread *t;
   struct kernel_thread_frame *kf;
@@ -234,7 +237,7 @@ thread_block (void)
    it may expect that it can atomically unblock a thread and
    update other data. */
 void
-thread_unblock (struct thread *t) 
+thread_unblock (struct thread *t)
 {
   enum intr_level old_level;
 
@@ -249,7 +252,7 @@ thread_unblock (struct thread *t)
 
 /** Returns the name of the running thread. */
 const char *
-thread_name (void) 
+thread_name (void)
 {
   return thread_current ()->name;
 }
@@ -258,10 +261,10 @@ thread_name (void)
    This is running_thread() plus a couple of sanity checks.
    See the big comment at the top of thread.h for details. */
 struct thread *
-thread_current (void) 
+thread_current (void)
 {
   struct thread *t = running_thread ();
-  
+
   /* Make sure T is really a thread.
      If either of these assertions fire, then your thread may
      have overflowed its stack.  Each thread has less than 4 kB
@@ -275,7 +278,7 @@ thread_current (void)
 
 /** Returns the running thread's tid. */
 tid_t
-thread_tid (void) 
+thread_tid (void)
 {
   return thread_current ()->tid;
 }
@@ -283,7 +286,7 @@ thread_tid (void)
 /** Deschedules the current thread and destroys it.  Never
    returns to the caller. */
 void
-thread_exit (void) 
+thread_exit (void)
 {
   ASSERT (!intr_context ());
 
@@ -304,11 +307,11 @@ thread_exit (void)
 /** Yields the CPU.  The current thread is not put to sleep and
    may be scheduled again immediately at the scheduler's whim. */
 void
-thread_yield (void) 
+thread_yield (void)
 {
   struct thread *cur = thread_current ();
   enum intr_level old_level;
-  
+
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
@@ -339,10 +342,20 @@ thread_foreach (thread_action_func *func, void *aux)
 
 /** Sets the current thread's priority to NEW_PRIORITY. */
 void
-thread_set_priority (int new_priority) 
+thread_set_priority (int new_priority)
 {
+  ASSERT (PRI_MIN <= new_priority && new_priority <= PRI_MAX);
+
   int old_priority = thread_get_priority();
-  thread_current ()->priority = new_priority;
+  struct thread *current = thread_current ();
+
+  current->base_priority = new_priority;
+
+  /* If there is no higher priority donator or new priority is
+     higher than current priority, set the priority too. */
+  if (list_empty(&thread_current ()->hold_lock_list) ||
+      new_priority > thread_current ()->priority)
+    thread_current ()->priority = new_priority;
 
   /* When lowering priority, if new_priority is not the highest,
     yield immediately. */
@@ -352,7 +365,7 @@ thread_set_priority (int new_priority)
 
 /** Returns the current thread's priority. */
 int
-thread_get_priority (void) 
+thread_get_priority (void)
 {
   return thread_current ()->priority;
 }
@@ -368,10 +381,107 @@ thread_compare_priority (const struct list_elem *e1,
                          const struct list_elem *e2,
                          void *aux UNUSED)
 {
-  if (list_entry(e1, struct thread, elem)->priority >
-          list_entry(e2, struct thread, elem)->priority)
-      return 1;
-  return 0;
+  return list_entry(e1, struct thread, elem)->priority >
+          list_entry(e2, struct thread, elem)->priority;
+}
+
+/** Donates priority to thread.
+    Return if donation succeed or not.
+
+    If thread has already been in ready queue, reinsert it. */
+bool thread_donate_priority (struct thread *t, int priority)
+{
+  /* Donate priority. */
+  t->priority = priority;
+
+  /* If thread is in ready queue, rearrange the place. */
+  if (t->status == THREAD_READY)
+    {
+      for (struct list_elem *e = list_begin (&ready_list);
+           e != list_end (&ready_list); e = list_next (e))
+      {
+        if (e == &t->elem)
+        {
+          /* Find the thread, remove it from ready queue. */
+          list_remove (e);
+          /* Insert the thread back to ready queue. */
+          list_insert_ordered (&ready_list, &t->elem,
+                               &thread_compare_priority, NULL);
+          break;
+        }
+      }
+    }
+
+  return 1;
+}
+
+/** Donates priority to thread nested.
+    Return if donation succeed or not. */
+bool thread_donate_priority_nested (struct thread *t, int priority)
+{
+  struct thread *thread = t;
+  bool success = 0;
+  int depth = 0;
+
+  while (depth < NESTED_DONATE_DEPTH)
+    {
+      if (priority < thread->priority)
+        break;
+      success = thread_donate_priority (thread, priority);
+      /* If there is no waiting_lock, break. */
+      if (thread->waiting_lock == NULL)
+        break;
+      /* Update lock->max_priority. */
+      thread->waiting_lock->max_priority = priority;
+      /* Set thread to the next depth level. */
+      if ((thread = thread->waiting_lock->holder) == NULL)
+        break;
+      /* Update nested depth. */
+      depth++;
+    }
+
+  return success;
+}
+
+
+/** Set thread *t's priority to the highest value among holding locks'
+    max_priority and its base_priority. */
+void thread_priority_recall (struct thread *t)
+{
+  int new_priority = t->base_priority;
+
+  /* Compare the largest priority in hold_lock_list to base_priority. */
+  if (!list_empty(&t->hold_lock_list))
+    {
+      for (struct list_elem *e = list_begin(&t->hold_lock_list);
+            e != list_end(&t->hold_lock_list); e = list_next(e))
+        {
+          struct lock *l = list_entry(e, struct lock, elem);
+          new_priority = l->max_priority > new_priority ?
+                         l->max_priority : new_priority;
+        }
+    }
+
+  /* Recall priority. */
+  t->priority = new_priority;
+
+  /* If thread is in ready queue, rearrange the place. */
+  if (t->status == THREAD_READY)
+    {
+      for (struct list_elem *e = list_begin (&ready_list);
+           e != list_end (&ready_list); e = list_next (e))
+      {
+        if (e == &t->elem)
+        {
+          /* Find the thread, remove it from ready queue. */
+          list_remove (e);
+          /* Insert the thread back to ready queue. */
+          list_insert_ordered (&ready_list, &t->elem,
+                               &thread_compare_priority, NULL);
+          break;
+        }
+      }
+    }
 }
 
 /** Sets the current thread's nice value to NICE. */
@@ -490,7 +600,12 @@ init_thread (struct thread *t, const char *name, int priority)
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
+
   t->priority = priority;
+  t->base_priority = priority;
+  list_init (&t->hold_lock_list);
+  t->waiting_lock = NULL;
+
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
