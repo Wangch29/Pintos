@@ -334,7 +334,7 @@ make_idtr_operand (uint16_t limit, void *base)
 {
   return limit | ((uint64_t) (uint32_t) base << 16);
 }
-
+
 /** Interrupt handlers. */
 
 /** Handler for all interrupts, faults, and exceptions.  This

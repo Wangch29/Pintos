@@ -156,7 +156,7 @@ pintos_init (void)
         printf("%c", key);
       }
       if (!strcmp((char*) cmd, "whoami")) {
-          printf("Student Id:%d\n", 20010209);
+          printf("Student Id:%d\n", 12345678);
       }
       if (!strcmp((char *) cmd, "exit")) {
           break;

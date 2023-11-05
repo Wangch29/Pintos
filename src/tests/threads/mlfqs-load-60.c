@@ -128,7 +128,7 @@ test_mlfqs_load_60 (void)
     }
   msg ("Starting threads took %d seconds.",
        timer_elapsed (start_time) / TIMER_FREQ);
-  
+
   for (i = 0; i < 90; i++) 
     {
       int64_t sleep_until = start_time + TIMER_FREQ * (2 * i + 10);
