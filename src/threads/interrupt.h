@@ -24,7 +24,7 @@ struct intr_frame
     uint32_t edi;               /**< Saved EDI. */
     uint32_t esi;               /**< Saved ESI. */
     uint32_t ebp;               /**< Saved EBP. */
-    uint32_t esp_dummy;         /**< Not used. */
+    uint32_t esp_dummy;         /**< Not used.  */
     uint32_t ebx;               /**< Saved EBX. */
     uint32_t edx;               /**< Saved EDX. */
     uint32_t ecx;               /**< Saved ECX. */

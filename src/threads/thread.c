@@ -44,6 +44,9 @@ static struct lock tid_lock;
 /** Load_avg in fix-point format(17.14). */
 int32_t load_avg;
 
+/** Scheduler should be working. */
+static bool schedule_started = false;
+
 /** Stack frame for kernel_thread(). */
 struct kernel_thread_frame
   {
@@ -119,6 +122,7 @@ thread_start (void)
 
   /* Start preemptive thread scheduling. */
   intr_enable ();
+  schedule_started = true;
 
   /* Wait for the idle thread to initialize idle_thread. */
   sema_down (&idle_started);
@@ -138,7 +142,7 @@ thread_tick (void)
   else if (t->pagedir != NULL)
     {
       user_ticks++;
-      t->recent_cpu += 1 * FIX_POINT_F;
+      t->recent_cpu += itof(1);
     }
 #endif
   else
@@ -147,6 +151,7 @@ thread_tick (void)
   /* Check MLFQS mode. */
   if (thread_mlfqs)
   {
+    /* Update recent_cpu of current thread. */
     if (t != idle_thread)
       t->recent_cpu += itof(1);
 
@@ -341,6 +346,10 @@ thread_yield (void)
 
   ASSERT (!intr_context ());
 
+  /* Start working only when schedule_started is true. */
+  if (!schedule_started)
+    return;
+
   old_level = intr_disable ();
   if (cur != idle_thread)
     list_insert_ordered (&ready_list, &cur->elem,
@@ -517,8 +526,6 @@ void thread_priority_recall (struct thread *t)
 static void
 mlfqs_update_priority (struct thread *t, void *aux UNUSED)
 {
-  ASSERT (thread_mlfqs);
-
   if (t == idle_thread)
     return;
 
@@ -581,8 +588,6 @@ mlfqs_update_recent_cpu (struct thread *t, void *aux UNUSED)
 void
 mlfqs_update_all_recent_cpu (void)
 {
-  ASSERT (thread_mlfqs);
-
   thread_foreach (&mlfqs_update_recent_cpu, NULL);
 }
 
@@ -590,8 +595,6 @@ mlfqs_update_all_recent_cpu (void)
 void
 mlfqs_update_load_avg (void)
 {
-  ASSERT (thread_mlfqs);
-
   fixed_point coef = div_ff(itof(59), itof(60));
   int ready_thread_cnt = list_size(&ready_list);
   if (thread_current() != idle_thread) {
@@ -695,7 +698,9 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
 
-  /* Set priority and priority donation devices when not in mlfqs mode. */
+  t->exit_status = 0;
+
+  /* When not in mlfqs mode, set priority and priority donation devices. */
   if (!thread_mlfqs)
     {
       list_init (&t->hold_lock_list);

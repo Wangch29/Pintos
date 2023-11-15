@@ -18,6 +18,8 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+#define MAX_TOKEN_LENGTH 128
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
@@ -26,33 +28,59 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
-process_execute (const char *file_name) 
+process_execute (const char *process_args)
 {
-  char *fn_copy;
+  char *file_name;
+  char *process_args_copy1;
+  char *process_args_copy2;
+  char *saved_ptr;
   tid_t tid;
+
+  process_args_copy1 = palloc_get_page(0);
+  process_args_copy2 = palloc_get_page(0);
+  if (process_args_copy2 == NULL || process_args == NULL)
+    {
+      palloc_free_page (process_args_copy2);
+      palloc_free_page (process_args_copy1);
+      return TID_ERROR;
+    }
+
+  /* Make a copy1 of process_args for start_process () argument. */
+  strlcpy (process_args_copy1, process_args, PGSIZE);
+  /* Make a copy2 of process_args for thread_create () file_name. */
+  strlcpy (process_args_copy2, process_args, PGSIZE);
 
   /* Make a copy of FILE_NAME.
      Otherwise, there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
-    return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  file_name = strtok_r (process_args_copy2, " ", &saved_ptr);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (file_name, PRI_DEFAULT, start_process, process_args_copy1);
+
   if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+    {
+      palloc_free_page(process_args_copy1);
+      palloc_free_page(process_args_copy2);
+    }
   return tid;
 }
 
 /** A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *file_name_)
+start_process (void *process_args_)
 {
-  char *file_name = file_name_;
+  char *process_args = process_args_;
+  char *process_args_copy;
+  char *file_name;
   struct intr_frame if_;
   bool success;
+  char *saved_ptr;
+
+  process_args_copy = palloc_get_page (0);
+  memcpy(process_args_copy, process_args, PGSIZE);
+  file_name = strtok_r(process_args_copy, " ", &saved_ptr);
+  saved_ptr = NULL;
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -60,11 +88,65 @@ start_process (void *file_name_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
-
   /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success) 
-    thread_exit ();
+  if (!success)
+    {
+      palloc_free_page (process_args);
+      palloc_free_page (process_args_copy);
+      thread_exit ();
+    }
+
+  /* Put arguments on the stack. */
+  if_.esp = PHYS_BASE;
+  char* words[MAX_TOKEN_LENGTH];
+  uintptr_t argv0;
+  uint8_t n = 0;
+  uint32_t argc = 0;
+  size_t ptr_size = sizeof (uintptr_t);
+
+  /* Firstly, break the command into words. */
+  for (char *token = strtok_r (process_args, " ", &saved_ptr); token != NULL;
+       token = strtok_r (NULL, " ", &saved_ptr))
+    *(words + n++) = token;
+  argc = n;
+  uintptr_t words_address[n];
+  /* Secondly, put the words on the stack. */
+  while (n != 0)
+  {
+    size_t size = strlen(*(words + --n)) + 1;
+    if_.esp -= size;
+    memcpy(if_.esp, *(words + n), size);
+    words_address[n] = (uintptr_t) if_.esp;
+  }
+  /* Thirdly, word-align to a multiple of 4. */
+  uint8_t word_align_num = (uint32_t) if_.esp & 0x03;
+  if_.esp -= word_align_num;
+  memset(if_.esp, 0, word_align_num);
+
+  /* Fourthly, push the address of each string plus a null pointer sentinel,
+     on the stack, in last-to-first order. */
+  if_.esp -= ptr_size;
+  memset(if_.esp, 0, ptr_size);
+  for (n = 0; n != argc; n++)
+  {
+    if_.esp -= ptr_size;
+    memcpy(if_.esp, &words_address[argc-1 - n], ptr_size);
+  }
+  argv0 = (uintptr_t) if_.esp;
+  /* Fifthly, push argv (the address of argv[0]) and argc, in that order.   */
+  if_.esp -= ptr_size;
+  memcpy(if_.esp, &argv0, ptr_size);
+  if_.esp -= sizeof(uint32_t);
+  memcpy(if_.esp, &argc, sizeof(uint32_t));
+  /* Finally, push a fake "return address".  */
+  if_.esp -= ptr_size;
+  memset(if_.esp, 0, ptr_size);
+
+  printf("STACK SET. ESP: %p\n", if_.esp);
+  hex_dump((uintptr_t)if_.esp, if_.esp, 100, true);
+
+  palloc_free_page (process_args);
+  palloc_free_page (process_args_copy);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -97,6 +179,8 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+
+  printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -315,7 +399,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   file_close (file);
   return success;
 }
-
+
 /** load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);

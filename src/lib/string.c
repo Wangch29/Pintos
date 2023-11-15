@@ -288,7 +288,7 @@ memset (void *dst_, int value, size_t size)
   return dst_;
 }
 
-/** Returns the length of STRING. */
+/** Returns the length of STRING. Not including '\0'. */
 size_t
 strlen (const char *string) 
 {
