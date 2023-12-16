@@ -163,8 +163,8 @@ pintos_init (void)
       }
     }
 
-    free(cmd);
-    printf("Leaving the shell...\n");
+    free (cmd);
+    printf ("Leaving the shell...\n");
   }
 
   /* Finish up. */

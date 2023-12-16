@@ -5,6 +5,8 @@
 #include <list.h>
 #include <stdint.h>
 #include <float.h>
+#include "threads/synch.h"
+#include "filesys/filesys.h"
 
 /** States in a thread's life cycle. */
 enum thread_status
@@ -24,6 +26,9 @@ typedef int tid_t;
 #define PRI_MIN 0                       /**< Lowest priority. */
 #define PRI_DEFAULT 31                  /**< Default priority. */
 #define PRI_MAX 63                      /**< Highest priority. */
+
+struct process;
+struct file_table_entry;
 
 /** A kernel thread or user process.
 
@@ -86,21 +91,31 @@ struct thread
     /* Owned by thread.c. */
     tid_t tid;                          /**< Thread identifier.                 */
     enum thread_status status;          /**< Thread state.                      */
-    int8_t exit_status;
+    int32_t exit_status;                /**< Exit return state.                 */
     char name[16];                      /**< Name (for debugging purposes).     */
     uint8_t *stack;                     /**< Saved stack pointer.               */
 
     uint8_t priority;                   /**< Priority.                          */
     uint8_t base_priority;              /**< Base priority.                     */
     struct list hold_lock_list;         /**< Holding lock list.                 */
-    struct lock *waiting_lock;          /**< The Waiting lock.                  */
+    struct lock *waiting_lock;          /**< The lock that thread waiting on.   */
 
     int8_t nice;                        /**< Nice value for 4.4BSD scheduler.   */
     fixed_point recent_cpu;             /**< Recent cpu time in fixed-point.    */
 
     struct list_elem allelem;           /**< List element for all threads list. */
     /* Shared between thread.c and synch.c. */
-    struct list_elem elem;              /**< List element. */
+    struct list_elem elem;              /**< List element.                      */
+    /* For user process level.  */
+    struct process *process;            /**< Process pointer.                   */
+    struct list children_list;          /**< Children process list.             */
+
+    struct semaphore wait_child_load;   /**< Child process loading.             */
+    bool child_load_success;            /**< Child process load success.        */
+
+    struct list file_descriptor_table;  /**< File Descriptor Table.             */
+    int next_fd;                        /**< The next file descriptor number.   */
+    struct file *execute_file;          /**< File executing on.                 */
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -110,6 +125,29 @@ struct thread
     /* Owned by thread.c. */
     unsigned magic;                     /**< Detects stack overflow.             */
   };
+
+/** File table */
+struct file_table_entry
+{
+    uint32_t fd;               /**< File descriptor. */
+    struct file *file;         /**< File pointer. */
+    struct list_elem elem;     /**< List_elem. */
+};
+
+/** A user process. */
+struct process
+{
+    tid_t tid;                              /**< Thread id.                            */
+    struct thread *thread;                  /**< Thread.                               */
+    struct thread *parent;                  /**< Parent thread.                        */
+
+    bool exit;                              /**< Exit or not.                          */
+    bool parent_sleeping;                   /**< Parent is sleeping or not.            */
+    int32_t exit_status;                    /**< Exit status.                          */
+
+    struct semaphore sema;                  /**< Semaphore that parent sleeps on.      */
+    struct list_elem elem;                  /**< List_elem for parent's children_list. */
+};
 
 /** If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -156,5 +194,7 @@ int thread_get_load_avg (void);
 void mlfqs_update_all_recent_cpu (void);
 void mlfqs_update_load_avg (void);
 void mlfqs_update_all_priorities (void);
+
+
 
 #endif /**< threads/thread.h */

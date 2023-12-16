@@ -17,6 +17,7 @@ static void do_format (void);
 void
 filesys_init (bool format) 
 {
+  lock_init (&filesys_lock);
   fs_device = block_get_role (BLOCK_FILESYS);
   if (fs_device == NULL)
     PANIC ("No file system device found, can't initialize file system.");
@@ -37,7 +38,7 @@ filesys_done (void)
 {
   free_map_close ();
 }
-
+
 /** Creates a file named NAME with the given INITIAL_SIZE.
    Returns true if successful, false otherwise.
    Fails if a file named NAME already exists,
@@ -89,7 +90,7 @@ filesys_remove (const char *name)
 
   return success;
 }
-
+
 /** Formats the file system. */
 static void
 do_format (void)

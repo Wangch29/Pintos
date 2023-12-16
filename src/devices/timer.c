@@ -6,7 +6,6 @@
 #include "devices/pit.h"
 #include "threads/interrupt.h"
 #include "threads/synch.h"
-#include "threads/thread.h"
 #include "threads/malloc.h"
 
 /** See [8254] for hardware details of the 8254 timer chip. */
@@ -111,7 +110,7 @@ timer_sleep (int64_t ticks)
 
   enum intr_level old_level = intr_disable ();
 
-  struct sleeper_elem *new_sleeper = malloc(sizeof(struct sleeper_elem));
+  struct sleeper_elem *new_sleeper = malloc (sizeof (struct sleeper_elem));
   new_sleeper->thread_elem = thread_current ();
   new_sleeper->sleep_ticks = ticks;
   list_push_back (&sleep_list, &new_sleeper->elem);

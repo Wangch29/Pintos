@@ -273,7 +273,7 @@ pic_end_of_interrupt (int irq)
   if (irq >= 0x28)
     outb (0xa0, 0x20);
 }
-
+
 /** Creates an gate that invokes FUNCTION.
 
    The gate has descriptor privilege level DPL, meaning that it

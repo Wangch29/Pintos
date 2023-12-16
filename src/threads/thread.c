@@ -4,6 +4,7 @@
 #include <random.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
@@ -80,6 +81,9 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+
+static void mlfqs_update_priority (struct thread *t, void *aux UNUSED);
+static void mlfqs_update_recent_cpu (struct thread *t, void *aux UNUSED);
 
 /** Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -158,14 +162,14 @@ thread_tick (void)
     int64_t ticks = timer_ticks();
     /* Once every fourth tick, update priority for every thread. */
     if (ticks % 4 == 0)
-      mlfqs_update_all_priorities ();
+      thread_foreach (&mlfqs_update_priority, NULL);
     /* Once per second, update load_avg and recent_cpu. */
     if (ticks % TIMER_FREQ == 0)
     {
       /* Update load_avg. */
       mlfqs_update_load_avg ();
       /* Update recent_cpu time for every thread. */
-      mlfqs_update_all_recent_cpu ();
+      thread_foreach (&mlfqs_update_recent_cpu, NULL);
     }
   }
 
@@ -202,12 +206,15 @@ thread_create (const char *name, int priority,
                thread_func *function, void *aux)
 {
   struct thread *t;
+  struct thread *current;
   struct kernel_thread_frame *kf;
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
   tid_t tid;
 
   ASSERT (function != NULL);
+
+  current = thread_current ();
 
   /* Allocate thread. */
   t = palloc_get_page (PAL_ZERO);
@@ -217,6 +224,19 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+
+  /* Initialize process. */
+  struct process *p = malloc (sizeof (struct process));
+  t->process = p;
+  p->tid = tid;
+  p->thread = t;
+  p->exit = false;
+  p->parent_sleeping = false;
+  p->parent = current;
+  sema_init (&p->sema, 0);
+  list_init (&t->file_descriptor_table);
+  t->next_fd = 2;
+  list_push_back (&current->children_list, &p->elem);
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -238,7 +258,7 @@ thread_create (const char *name, int priority,
 
   /* Yield, when new created thread has higher priority
     than current threads */
-  if (priority > thread_current ()->priority)
+  if (priority > current->priority)
     thread_yield ();
 
   return tid;
@@ -322,9 +342,48 @@ thread_exit (void)
 {
   ASSERT (!intr_context ());
 
+  struct thread *cur = thread_current ();
+  struct process *p = cur->process;
+
 #ifdef USERPROG
   process_exit ();
 #endif
+
+  /* Close file_descriptor_table */
+  while (!list_empty (&cur->file_descriptor_table))
+    {
+      struct list_elem *e = list_pop_front (&cur->file_descriptor_table);
+      struct file_table_entry *fte = list_entry(e, struct file_table_entry, elem);
+      lock_acquire (&filesys_lock);
+      file_close (fte->file);
+      lock_release (&filesys_lock);
+      free (fte);
+    }
+
+  /* As a parent, set its children process's parent to NULL.
+     If its child has existed, free its process. */
+  for (struct list_elem *e = list_begin (&cur->children_list);
+       e != list_end (&cur->children_list); e = list_next (e))
+    {
+      struct process *child_p = list_entry (e, struct process, elem);
+      if (!child_p->exit)
+        child_p->parent = NULL;
+      //else
+        //free (child_p);
+    }
+
+  /* As a child, update its process. */
+  if (p->parent != NULL)
+    {
+      p->exit = true;
+      p->exit_status = cur->exit_status;
+      /* If parent_sleeping is true, wake parent up. */
+      if (p->parent_sleeping)
+        sema_up (&p->sema);
+    }
+  else
+      /* When its parent has exited, free process. */
+      free (cur->process);
 
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
@@ -486,6 +545,9 @@ bool thread_donate_priority_nested (struct thread *t, int priority)
     max_priority and its base_priority. */
 void thread_priority_recall (struct thread *t)
 {
+  if (thread_mlfqs)
+    return;
+
   int new_priority = t->base_priority;
 
   /* Compare the largest priority in hold_lock_list to base_priority. */
@@ -544,8 +606,6 @@ mlfqs_update_priority (struct thread *t, void *aux UNUSED)
 void
 thread_set_nice (int nice)
 {
-  ASSERT (thread_mlfqs);
-
   struct thread *current = thread_current ();
   current->nice = nice;
   /* Calculate priority. */
@@ -607,8 +667,6 @@ mlfqs_update_load_avg (void)
 void
 mlfqs_update_all_priorities (void)
 {
-  ASSERT (thread_mlfqs);
-
   thread_foreach (&mlfqs_update_priority, NULL);
 }
 
@@ -699,6 +757,8 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
 
   t->exit_status = 0;
+  list_init (&t->children_list);
+  sema_init (&t->wait_child_load, 0);
 
   /* When not in mlfqs mode, set priority and priority donation devices. */
   if (!thread_mlfqs)
@@ -717,14 +777,15 @@ init_thread (struct thread *t, const char *name, int priority)
           t->nice = 0;
           t->recent_cpu = 0;
           load_avg = 0;
+          t->priority = PRI_MIN;
         }
       else
       /* For other threads, inherit nice value from parent. */
         {
           t->nice = thread_current ()->nice;
           t->recent_cpu = thread_current ()->recent_cpu;
+          mlfqs_update_priority(t, NULL);
         }
-      mlfqs_update_priority(t, NULL);
     }
 
   t->magic = THREAD_MAGIC;

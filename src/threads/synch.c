@@ -242,11 +242,11 @@ lock_acquire (struct lock *lock)
   sema_down (&lock->semaphore);
 
   /* Get the lock. */
-  current->waiting_lock = NULL;
   lock->holder = current;
 
   if (!thread_mlfqs)
   {
+    current->waiting_lock = NULL;
     if (list_empty (&lock->semaphore.waiters))
       lock->max_priority = current->priority;
     /* Put the lock in thread hold_lock_list */
