@@ -195,6 +195,11 @@ sys_open (struct intr_frame *f)
     }
 
   struct file_table_entry *fte = malloc (sizeof (struct file_table_entry));
+  if (fte == NULL)
+    {
+      f->eax = -1;
+      return;
+    }
   fte->fd = thread_current ()->next_fd++;
   f->eax = fte->fd;
   fte->file = file;

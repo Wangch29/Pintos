@@ -37,45 +37,42 @@ process_execute (const char *process_args)
   char *saved_ptr;
   tid_t tid;
 
+  /* process_args_copy1 stores the name of thread. */
   process_args_copy1 = palloc_get_page(0);
+  /* process_args_copy2 stores the start_process () argument. */
   process_args_copy2 = palloc_get_page(0);
-  if (process_args_copy2 == NULL || process_args == NULL)
+  if (process_args_copy1 == NULL || process_args_copy2 == NULL)
     {
-      palloc_free_page (process_args_copy2);
+      printf("[Error] Kernel Error: Not enough memory\n");
       palloc_free_page (process_args_copy1);
+      palloc_free_page (process_args_copy2);
       return TID_ERROR;
     }
 
-  /* Make a copy1 of process_args for start_process () argument. */
   strlcpy (process_args_copy1, process_args, PGSIZE);
-  /* Make a copy2 of process_args for thread_create () file_name. */
   strlcpy (process_args_copy2, process_args, PGSIZE);
-
-  if (process_args_copy1 == NULL || process_args_copy2 == NULL)
-    {
-      palloc_free_page (process_args_copy1);
-      palloc_free_page (process_args_copy2);
-      return -1;
-    }
 
   /* Make a copy of FILE_NAME.
      Otherwise, there's a race between the caller and load(). */
-  file_name = strtok_r (process_args_copy2, " ", &saved_ptr);
+  file_name = strtok_r (process_args_copy1, " ", &saved_ptr);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, process_args_copy1);
+  tid = thread_create (file_name, PRI_DEFAULT, start_process, process_args_copy2);
+
+  /* The process_args_copy1 stores the thread name, and after thread_create, the name
+     is stored in struct thread, so I can free it. */
+  palloc_free_page (process_args_copy1);
+
   if (tid == TID_ERROR)
-    {
-      palloc_free_page (process_args_copy1);
-      palloc_free_page (process_args_copy2);
-      return tid;
-    }
+    return tid;
 
   /* Wait until child process get loaded. And check
      if loading succeed. */
   sema_down (&thread_current ()->wait_child_load);
   if (!thread_current ()->child_load_success)
     return -1;
+  /* Reset load flag. */
+  thread_current ()->child_load_success = false;
 
   return tid;
 }
@@ -83,9 +80,8 @@ process_execute (const char *process_args)
 /** A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *process_args_)
+start_process (void *process_args)
 {
-  char *process_args = process_args_;
   char *process_args_copy;
   char *file_name;
   struct intr_frame if_;
@@ -93,6 +89,7 @@ start_process (void *process_args_)
   char *saved_ptr;
   struct thread *cur = thread_current ();
 
+  /* process_args_copy is used to store the file_name. */
   process_args_copy = palloc_get_page (0);
   if (process_args_copy == NULL)
   {
@@ -111,7 +108,9 @@ start_process (void *process_args_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
+  lock_acquire (&filesys_lock);
   success = load (file_name, &if_.eip, &if_.esp);
+  lock_release (&filesys_lock);
   /* If load failed, quit. */
   if (!success)
     {
@@ -172,6 +171,12 @@ start_process (void *process_args_)
   /* Finally, push a fake "return address".  */
   if_.esp -= ptr_size;
   memset(if_.esp, 0, ptr_size);
+
+  //lock_acquire(&filesys_lock);
+  //struct file *f = filesys_open(process_args);
+  //file_deny_write (f);
+  //lock_release(&filesys_lock);
+  //thread_current()->execute_file = f;
 
   //printf("STACK SET. ESP: %p\n", if_.esp);
   //hex_dump((uintptr_t)if_.esp, if_.esp, 100, true);
@@ -244,9 +249,13 @@ process_exit (void)
   printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
 
   /* Close executing file, which allows to write to it again. */
-  lock_acquire (&filesys_lock);
-  file_close (cur->execute_file);
-  lock_release (&filesys_lock);
+  if (cur->execute_file)
+    {
+      lock_acquire (&filesys_lock);
+      file_allow_write (cur->execute_file);
+      file_close (cur->execute_file);
+      lock_release (&filesys_lock);
+    }
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -372,9 +381,9 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* Open executable file. */
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   file = filesys_open (file_name);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
   if (file == NULL)
     {
       printf ("load: %s: open failed\n", file_name);
@@ -466,6 +475,9 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
+  //lock_acquire (&filesys_lock);
+  //file_close (file);
+  //lock_release (&filesys_lock);
   return success;
 }
 

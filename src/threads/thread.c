@@ -350,26 +350,29 @@ thread_exit (void)
 #endif
 
   /* Close file_descriptor_table */
+  lock_acquire (&filesys_lock);
   while (!list_empty (&cur->file_descriptor_table))
     {
       struct list_elem *e = list_pop_front (&cur->file_descriptor_table);
       struct file_table_entry *fte = list_entry(e, struct file_table_entry, elem);
-      lock_acquire (&filesys_lock);
       file_close (fte->file);
-      lock_release (&filesys_lock);
       free (fte);
     }
+  lock_release (&filesys_lock);
 
   /* As a parent, set its children process's parent to NULL.
      If its child has existed, free its process. */
   for (struct list_elem *e = list_begin (&cur->children_list);
-       e != list_end (&cur->children_list); e = list_next (e))
+       e != list_end (&cur->children_list);)
     {
       struct process *child_p = list_entry (e, struct process, elem);
+      e = list_remove (e);
       if (!child_p->exit)
+        /* Set the child process's parent to NULL, if child haven't exit. */
         child_p->parent = NULL;
-      //else
-        //free (child_p);
+      else
+        /* Free child process, if child has exited. */
+        free (child_p);
     }
 
   /* As a child, update its process. */
@@ -377,6 +380,7 @@ thread_exit (void)
     {
       p->exit = true;
       p->exit_status = cur->exit_status;
+      p->thread = NULL;
       /* If parent_sleeping is true, wake parent up. */
       if (p->parent_sleeping)
         sema_up (&p->sema);

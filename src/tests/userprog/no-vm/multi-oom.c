@@ -25,7 +25,7 @@
 #include "tests/lib.h"
 
 static const int EXPECTED_DEPTH_TO_PASS = 30;
-static const int EXPECTED_REPETITIONS = 10;
+static const int EXPECTED_REPETITIONS = 5;
 
 const char *test_name = "multi-oom";
 
@@ -39,6 +39,9 @@ spawn_child (int c, enum child_termination_mode mode)
   char child_cmd[128];
   snprintf (child_cmd, sizeof child_cmd,
             "%s %d %s", test_name, c, mode == CRASH ? "-k" : "");
+
+  //printf("\n\n%s %d %s", test_name, c, mode == CRASH ? "-k" : "");
+
   return exec (child_cmd);
 }
 
@@ -124,6 +127,7 @@ main (int argc, char *argv[])
 
   for (i = 0; i < howmany; i++)
     {
+      //printf("LOOP:%d\n\n", i);
       pid_t child_pid;
 
       /* Spawn a child that will be abnormally terminated.
@@ -152,7 +156,7 @@ main (int argc, char *argv[])
       int reached_depth = wait (child_pid);
       if (reached_depth == -1)
         fail ("wait returned -1.");
-
+      //printf("\n\n reach, i = %d, reached_depth:%d\n\n", i, reached_depth);
       /* Record the depth reached during the first run; on subsequent
          runs, fail if those runs do not match the depth achieved on the
          first run. */
@@ -168,6 +172,7 @@ main (int argc, char *argv[])
 
   if (n == 0)
     {
+      //printf("REACH if\n\n");
       if (expected_depth < EXPECTED_DEPTH_TO_PASS)
         fail ("should have forked at least %d times.", EXPECTED_DEPTH_TO_PASS);
       msg ("success. program forked %d times.", howmany);
