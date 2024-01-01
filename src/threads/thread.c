@@ -225,18 +225,21 @@ thread_create (const char *name, int priority,
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
 
-  /* Initialize process. */
+  /* Initialize process.
+#ifdef USERPROG
   struct process *p = malloc (sizeof (struct process));
+  if (p == NULL)
+    return TID_ERROR;
+
   t->process = p;
-  p->tid = tid;
   p->thread = t;
+  p->pid = PID_INITIALIZING;
   p->exit = false;
   p->parent_sleeping = false;
   p->parent = current;
   sema_init (&p->sema, 0);
-  list_init (&t->file_descriptor_table);
-  t->next_fd = 2;
   list_push_back (&current->children_list, &p->elem);
+#endif*/
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -343,51 +346,18 @@ thread_exit (void)
   ASSERT (!intr_context ());
 
   struct thread *cur = thread_current ();
-  struct process *p = cur->process;
 
 #ifdef USERPROG
   process_exit ();
 #endif
 
-  /* Close file_descriptor_table */
-  lock_acquire (&filesys_lock);
-  while (!list_empty (&cur->file_descriptor_table))
+  /* Release all locks */
+  for (struct list_elem *e = list_begin (&cur->hold_lock_list);
+       e != list_end (&cur->hold_lock_list); e = list_next (e))
     {
-      struct list_elem *e = list_pop_front (&cur->file_descriptor_table);
-      struct file_table_entry *fte = list_entry(e, struct file_table_entry, elem);
-      file_close (fte->file);
-      free (fte);
+      struct lock *lock = list_entry(e, struct lock, elem);
+      lock_release(lock);
     }
-  lock_release (&filesys_lock);
-
-  /* As a parent, set its children process's parent to NULL.
-     If its child has existed, free its process. */
-  for (struct list_elem *e = list_begin (&cur->children_list);
-       e != list_end (&cur->children_list);)
-    {
-      struct process *child_p = list_entry (e, struct process, elem);
-      e = list_remove (e);
-      if (!child_p->exit)
-        /* Set the child process's parent to NULL, if child haven't exit. */
-        child_p->parent = NULL;
-      else
-        /* Free child process, if child has exited. */
-        free (child_p);
-    }
-
-  /* As a child, update its process. */
-  if (p->parent != NULL)
-    {
-      p->exit = true;
-      p->exit_status = cur->exit_status;
-      p->thread = NULL;
-      /* If parent_sleeping is true, wake parent up. */
-      if (p->parent_sleeping)
-        sema_up (&p->sema);
-    }
-  else
-      /* When its parent has exited, free process. */
-      free (cur->process);
 
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
@@ -760,15 +730,13 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
 
+  //t->waiting_lock = NULL;
   t->exit_status = 0;
-  list_init (&t->children_list);
-  sema_init (&t->wait_child_load, 0);
 
   /* When not in mlfqs mode, set priority and priority donation devices. */
   if (!thread_mlfqs)
     {
       list_init (&t->hold_lock_list);
-      t->waiting_lock = NULL;
       t->priority = priority;
       t->base_priority = priority;
     }
@@ -791,6 +759,15 @@ init_thread (struct thread *t, const char *name, int priority)
           mlfqs_update_priority(t, NULL);
         }
     }
+
+#ifdef USERPROG
+  list_init (&t->file_descriptor_table);
+  list_init (&t->children_list);
+  sema_init (&t->wait_child_load, 0);
+  t->process = NULL;
+  t->execute_file = NULL;
+  t->next_fd = 2;
+#endif
 
   t->magic = THREAD_MAGIC;
 

@@ -106,7 +106,11 @@ struct thread
     struct list_elem allelem;           /**< List element for all threads list. */
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /**< List element.                      */
-    /* For user process level.  */
+
+#ifdef USERPROG
+    /* Owned by userprog/process.c. */
+    uint32_t *pagedir;                  /**< Page directory. */
+
     struct process *process;            /**< Process pointer.                   */
     struct list children_list;          /**< Children process list.             */
 
@@ -115,39 +119,13 @@ struct thread
 
     struct list file_descriptor_table;  /**< File Descriptor Table.             */
     int next_fd;                        /**< The next file descriptor number.   */
-    struct file *execute_file;          /**< File executing on.                 */
 
-#ifdef USERPROG
-    /* Owned by userprog/process.c. */
-    uint32_t *pagedir;                  /**< Page directory. */
+    struct file *execute_file;          /**< File executing on.                 */
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /**< Detects stack overflow.             */
   };
-
-/** File table */
-struct file_table_entry
-{
-    uint32_t fd;               /**< File descriptor. */
-    struct file *file;         /**< File pointer. */
-    struct list_elem elem;     /**< List_elem. */
-};
-
-/** A user process. */
-struct process
-{
-    tid_t tid;                              /**< Thread id.                            */
-    struct thread *thread;                  /**< Thread.                               */
-    struct thread *parent;                  /**< Parent thread.                        */
-
-    bool exit;                              /**< Exit or not.                          */
-    bool parent_sleeping;                   /**< Parent is sleeping or not.            */
-    int32_t exit_status;                    /**< Exit status.                          */
-
-    struct semaphore sema;                  /**< Semaphore that parent sleeps on.      */
-    struct list_elem elem;                  /**< List_elem for parent's children_list. */
-};
 
 /** If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.

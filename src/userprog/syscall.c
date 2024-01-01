@@ -55,9 +55,7 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f UNUSED)
 {
-  uint32_t syscall_num;
-
-  syscall_num = *(int *) read_user_ptr(f->esp, sizeof(int32_t));
+  uint32_t syscall_num = *(int *) read_user_ptr(f->esp, sizeof(int32_t));
 
   switch (syscall_num)
   {

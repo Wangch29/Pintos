@@ -7,7 +7,7 @@
 #ifdef FILESYS
 #include "filesys/file.h"
 #endif
-
+
 /** Element type.
 
    This must be an unsigned integer type at least as wide as int.
@@ -128,7 +128,7 @@ bitmap_destroy (struct bitmap *b)
       free (b);
     }
 }
-
+
 /** Bitmap size. */
 
 /** Returns the number of bits in B. */
@@ -285,7 +285,7 @@ bitmap_all (const struct bitmap *b, size_t start, size_t cnt)
 {
   return !bitmap_contains (b, start, cnt, false);
 }
-
+
 /** Finding set or unset bits. */
 
 /** Finds and returns the starting index of the first group of CNT
@@ -324,7 +324,7 @@ bitmap_scan_and_flip (struct bitmap *b, size_t start, size_t cnt, bool value)
     bitmap_set_multiple (b, idx, cnt, !value);
   return idx;
 }
-
+
 /** File input and output. */
 
 #ifdef FILESYS
@@ -359,7 +359,7 @@ bitmap_write (const struct bitmap *b, struct file *file)
   return file_write_at (file, b->bits, size, 0) == size;
 }
 #endif /**< FILESYS */
-
+
 /** Debugging. */
 
 /** Dumps the contents of B to the console as hexadecimal. */
