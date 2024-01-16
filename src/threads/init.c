@@ -37,6 +37,9 @@
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
 #endif
+#ifdef VM
+#include "vm/frametable.h"
+#endif
 
 /** Page directory with kernel mappings only. */
 uint32_t *init_page_dir;
@@ -98,6 +101,10 @@ pintos_init (void)
   palloc_init (user_page_limit);
   malloc_init ();
   paging_init ();
+
+#ifdef VM
+  vm_frametable_init ();
+#endif
 
   /* Segmentation. */
 #ifdef USERPROG

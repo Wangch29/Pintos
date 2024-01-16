@@ -18,7 +18,16 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "devices/timer.h"
+#include "vm/frametable.h"
+#include "vm/suppagetable.h"
 
+#ifndef VM
+/* If not in VM, back to naive palloc. */
+#define vm_frametable_allocate(x, y) palloc_get_page(x)
+#define vm_frametable_free(x) palloc_free_page(x)
+#endif
+
+/* The max length in char of a token. */
 #define MAX_TOKEN_LENGTH 128
 
 static thread_func start_process NO_RETURN;
@@ -310,6 +319,11 @@ process_exit (void)
     /* When its parent has exited, free process. */
     free (cur->process);
 
+#ifdef VM
+  vm_spt_destroy (cur->sup_page_table);
+  cur->sup_page_table = NULL; //TODO: ???
+#endif
+
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
@@ -427,10 +441,15 @@ load (const char *file_name, void (**eip) (void), void **esp)
   bool success = false;
   int i;
 
-  /* Allocate and activate page directory. */
+  /* Allocate and activate page directory and supplemental page table. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
     goto done;
+#ifdef VM
+  t->sup_page_table = vm_spt_create ();
+  if (t->sup_page_table == NULL)
+    goto done;
+#endif
   process_activate ();
 
   /* Open executable file. */
@@ -610,14 +629,14 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
       /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
+      uint8_t *kpage = vm_frametable_allocate (PAL_USER, upage);
       if (kpage == NULL)
         return false;
 
       /* Load this page. */
       if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
         {
-          palloc_free_page (kpage);
+          vm_frametable_free (kpage);
           return false; 
         }
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
@@ -625,7 +644,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       /* Add the page to the process's address space. */
       if (!install_page (upage, kpage, writable)) 
         {
-          palloc_free_page (kpage);
+          vm_frametable_free (kpage);
           return false; 
         }
 
@@ -645,14 +664,14 @@ setup_stack (void **esp)
   uint8_t *kpage;
   bool success = false;
 
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  kpage = vm_frametable_allocate (PAL_USER | PAL_ZERO, PHYS_BASE - PGSIZE);
   if (kpage != NULL) 
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
         *esp = PHYS_BASE;
       else
-        palloc_free_page (kpage);
+        vm_frametable_free (kpage);
     }
   return success;
 }
@@ -673,6 +692,11 @@ install_page (void *upage, void *kpage, bool writable)
 
   /* Verify that there's not already a page at that virtual
      address, then map our page there. */
-  return (pagedir_get_page (t->pagedir, upage) == NULL
-          && pagedir_set_page (t->pagedir, upage, kpage, writable));
+  bool success = (pagedir_get_page (t->pagedir, upage) == NULL
+                  && pagedir_set_page (t->pagedir, upage, kpage, writable));
+#ifdef VM
+  success = success && vm_spt_install_frame (t->sup_page_table, upage, kpage);
+  //  if(success) vm_frame_unpin(kpage);
+#endif
+  return success;
 }

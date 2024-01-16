@@ -10,6 +10,7 @@
 #include "threads/loader.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "vm/frametable.h"
 
 /** Page allocator.  Hands out memory in page-size (or
    page-multiple) chunks.  See malloc.h for an allocator that
@@ -48,6 +49,7 @@ palloc_init (size_t user_page_limit)
   /* Free memory starts at 1 MB and runs to the end of RAM. */
   uint8_t *free_start = ptov (1024 * 1024);
   uint8_t *free_end = ptov (init_ram_pages * PGSIZE);
+  /* The number of free pages. */
   size_t free_pages = (free_end - free_start) / PGSIZE;
   size_t user_pages = free_pages / 2;
   size_t kernel_pages;

@@ -4,16 +4,19 @@
 #include "threads/thread.h"
 #include "threads/synch.h"
 
-typedef int pid_t;
-
 #define PID_ERROR ((pid_t) -1)
 #define PID_INITIALIZING ((pid_t) -2)
+
+typedef int pid_t;
+
+struct process;
+struct file_table_entry;
 
 /** User process. */
 struct process
 {
     pid_t pid;                              /**< Process id.                           */
-    char *cmd;
+    char *cmd;                              /**< Process command.                      */
     struct thread *thread;                  /**< Thread.                               */
     struct thread *parent;                  /**< Parent thread.                        */
 

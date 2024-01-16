@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <float.h>
 #include "threads/synch.h"
+#include "vm/suppagetable.h"
 #include "filesys/filesys.h"
 
 /** States in a thread's life cycle. */
@@ -26,9 +27,6 @@ typedef int tid_t;
 #define PRI_MIN 0                       /**< Lowest priority. */
 #define PRI_DEFAULT 31                  /**< Default priority. */
 #define PRI_MAX 63                      /**< Highest priority. */
-
-struct process;
-struct file_table_entry;
 
 /** A kernel thread or user process.
 
@@ -109,7 +107,7 @@ struct thread
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
-    uint32_t *pagedir;                  /**< Page directory. */
+    uint32_t *pagedir;                  /**< Page directory.                    */
 
     struct process *process;            /**< Process pointer.                   */
     struct list children_list;          /**< Children process list.             */
@@ -121,6 +119,10 @@ struct thread
     int next_fd;                        /**< The next file descriptor number.   */
 
     struct file *execute_file;          /**< File executing on.                 */
+#endif
+
+#ifdef VM
+    struct sup_page_table *sup_page_table; /**< Supplemental page table.           */
 #endif
 
     /* Owned by thread.c. */

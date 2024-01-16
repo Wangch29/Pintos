@@ -88,9 +88,11 @@ lookup_page (uint32_t *pd, const void *vaddr, bool create)
 /** Adds a mapping in page directory PD from user virtual page
    UPAGE to the physical frame identified by kernel virtual
    address KPAGE.
+
    UPAGE must not already be mapped.
    KPAGE should probably be a page obtained from the user pool
    with palloc_get_page().
+
    If WRITABLE is true, the new page is read/write;
    otherwise it is read-only.
    Returns true if successful, false if memory allocation

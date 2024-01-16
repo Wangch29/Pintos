@@ -261,7 +261,7 @@ hash_empty (struct hash *h)
 #define FNV_32_PRIME 16777619u
 #define FNV_32_BASIS 2166136261u
 
-/** Returns a hash of the SIZE bytes in BUF. */
+/** Returns a hash of the SIZE bytes in BUF. FNV-1 hash algorithm. */
 unsigned
 hash_bytes (const void *buf_, size_t size)
 {
@@ -300,7 +300,7 @@ hash_int (int i)
 {
   return hash_bytes (&i, sizeof i);
 }
-
+
 /** Returns the bucket in H that E belongs in. */
 static struct list *
 find_bucket (struct hash *h, struct hash_elem *e) 

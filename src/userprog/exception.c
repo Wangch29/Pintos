@@ -1,9 +1,14 @@
 #include "userprog/exception.h"
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include "userprog/gdt.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include "threads/palloc.h"
+#include "threads/vaddr.h"
+
+#define MAX_STACK_BASE ((void *) 0x08048000)
 
 /** Number of page faults processed. */
 static long long page_fault_cnt;
@@ -149,13 +154,46 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-  /* When accessed by kernel, it must be caused by syscall. */
+  /* When access NULL(0x0), invalid. */
+  if (fault_addr == NULL)
+    goto page_fault_invalid;
+
+  /* Try to write read-only page. */
+  if (!not_present)
+    goto page_fault_invalid;
+
+#ifdef VM
+  void* fault_page = pg_round_down (fault_addr);
+  struct thread *cur = thread_current ();
+
+  /* When access kernel address, invalid. */
+  if (is_kernel_vaddr (fault_addr))
+    goto page_fault_invalid;
+
+  /* If valid to grow the stack. */
+  bool is_stack_area = MAX_STACK_BASE <= fault_addr;
+  bool valid_stack_access = (fault_addr >= MAX_STACK_BASE) && (fault_addr >= f->esp - 32);
+  if (valid_stack_access && is_stack_area)
+      /* Install a new zero page to sup_page_table. */
+    if (!vm_spt_has_page (cur->sup_page_table, fault_page))
+      vm_spt_install_zeropage (cur->sup_page_table, fault_page);
+
+  /* Page loading. If fault_page has no spt entry, goto page_fault_invalid. */
+  if (!vm_load_page (cur->sup_page_table, cur->pagedir, fault_page))
+    goto page_fault_invalid;
+
+  return;
+
+page_fault_invalid:
+#endif
+  /* When accessed by kernel, it must be caused by syscall.
+     Sets eax to -1, and copies its former value into eip. */
   if (!user)
-    {
-      f->eip = (void (*) (void)) f->eax;
-      f->eax = -1;
-      return;
-    }
+  {
+    f->eip = (void (*) (void)) f->eax;
+    f->eax = -1;
+    return;
+  }
 
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to

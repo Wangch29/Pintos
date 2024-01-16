@@ -730,7 +730,7 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
 
-  //t->waiting_lock = NULL;
+  t->waiting_lock = NULL;
   t->exit_status = 0;
 
   /* When not in mlfqs mode, set priority and priority donation devices. */
