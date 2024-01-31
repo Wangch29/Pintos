@@ -52,7 +52,7 @@ vm_frametable_init ()
   lock_init (&frame_table_lock);
   hash_init (&frame_table_hash, frametable_hash_func, frametable_less_func, NULL);
   list_init (&frame_table_list);
-  clock_ptr = list_begin (&frame_table_list);
+  clock_ptr = NULL;
 }
 
 /** Allocate a new frame.
