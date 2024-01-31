@@ -8,7 +8,7 @@
 #include "threads/palloc.h"
 #include "threads/vaddr.h"
 
-#define MAX_STACK_BASE ((void *) 0x08048000)
+#define MAX_STACK_BASE ((void *) 0xbf800000) // ((void *) PHYS_BASE - 0x800000 = 0xbf800000)
 
 /** Number of page faults processed. */
 static long long page_fault_cnt;
@@ -154,6 +154,14 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
+ /*
+  printf ("Page fault at %p: %s error %s page in %s context.\n",
+          fault_addr,
+          not_present ? "not present" : "rights violation",
+          write ? "writing" : "reading",
+          user ? "user" : "kernel");*/
+
+#if VM
   /* When access NULL(0x0), invalid. */
   if (fault_addr == NULL)
     goto page_fault_invalid;
@@ -162,19 +170,15 @@ page_fault (struct intr_frame *f)
   if (!not_present)
     goto page_fault_invalid;
 
-#ifdef VM
   void* fault_page = pg_round_down (fault_addr);
   struct thread *cur = thread_current ();
 
-  /* When access kernel address, invalid. */
-  if (is_kernel_vaddr (fault_addr))
-    goto page_fault_invalid;
-
+  void* esp = user ? f->esp : cur->current_esp; //TODO: ???
   /* If valid to grow the stack. */
-  bool is_stack_area = MAX_STACK_BASE <= fault_addr;
-  bool valid_stack_access = (fault_addr >= MAX_STACK_BASE) && (fault_addr >= f->esp - 32);
+  bool is_stack_area = fault_addr >= MAX_STACK_BASE && fault_addr < PHYS_BASE;
+  bool valid_stack_access = fault_addr >= esp - 32;
   if (valid_stack_access && is_stack_area)
-      /* Install a new zero page to sup_page_table. */
+    /* Install a new zero page to sup_page_table. */
     if (!vm_spt_has_page (cur->sup_page_table, fault_page))
       vm_spt_install_zeropage (cur->sup_page_table, fault_page);
 
@@ -182,10 +186,12 @@ page_fault (struct intr_frame *f)
   if (!vm_load_page (cur->sup_page_table, cur->pagedir, fault_page))
     goto page_fault_invalid;
 
+  /* Handle page fault successfully. */
   return;
 
 page_fault_invalid:
 #endif
+
   /* When accessed by kernel, it must be caused by syscall.
      Sets eax to -1, and copies its former value into eip. */
   if (!user)
@@ -203,6 +209,7 @@ page_fault_invalid:
           not_present ? "not present" : "rights violation",
           write ? "writing" : "reading",
           user ? "user" : "kernel");
+
   kill (f);
 }
 

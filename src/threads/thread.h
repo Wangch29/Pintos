@@ -92,6 +92,7 @@ struct thread
     int32_t exit_status;                /**< Exit return state.                 */
     char name[16];                      /**< Name (for debugging purposes).     */
     uint8_t *stack;                     /**< Saved stack pointer.               */
+    int32_t sleep_ticks;                 /**< The remaining sleeping time.       */
 
     uint8_t priority;                   /**< Priority.                          */
     uint8_t base_priority;              /**< Base priority.                     */
@@ -104,6 +105,7 @@ struct thread
     struct list_elem allelem;           /**< List element for all threads list. */
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /**< List element.                      */
+    struct list_elem sleep_elem;        /**< List element for sleeping threads. */
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -119,6 +121,8 @@ struct thread
     int next_fd;                        /**< The next file descriptor number.   */
 
     struct file *execute_file;          /**< File executing on.                 */
+
+    uint8_t* current_esp;
 #endif
 
 #ifdef VM
@@ -138,6 +142,7 @@ void thread_init (void);
 void thread_start (void);
 
 void thread_tick (void);
+void thread_sleep (int32_t ticks);
 void thread_print_stats (void);
 
 typedef void thread_func (void *aux);

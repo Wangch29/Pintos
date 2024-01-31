@@ -33,6 +33,10 @@ static struct list ready_list;
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
 
+/** List of sleeping processes. Processes are added to this
+   list when they sleep and removed when they end sleeping. */
+static struct list sleep_list;
+
 /** Idle thread. */
 static struct thread *idle_thread;
 
@@ -106,6 +110,7 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+  list_init (&sleep_list);
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -173,9 +178,48 @@ thread_tick (void)
     }
   }
 
+  thread_sleep_ticks ();
+
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
+}
+
+/** Sleep current thread for "time" ticks. */
+void
+thread_sleep (int32_t ticks)
+{
+  struct thread *cur = thread_current();
+
+  cur->sleep_ticks = ticks;
+  /* Insert thread to sleep_list. */
+  list_push_back (&sleep_list, &cur->sleep_elem);
+  thread_block();
+}
+
+/** Called by the timer interrupt handler at each timer tick.
+    Update sleep_ticks of each sleeper in sleep_list.  */
+void
+thread_sleep_ticks ()
+{
+  int cur_priority = thread_current ()->priority;
+  for (struct list_elem* i = list_begin(&sleep_list);
+       i != list_end(&sleep_list);)
+  {
+    struct thread *sleeper = list_entry(i, struct thread, sleep_elem);
+    sleeper->sleep_ticks -= 1;
+    /* When sleep_ticks is less or equal to zero, put it to ready queue. */
+    if (sleeper->sleep_ticks <= 0)
+    {
+      i = list_remove(i);
+      thread_unblock (sleeper);
+      /* If the woken thread have higher priority, yield. */
+      if (sleeper->priority > cur_priority)
+        intr_yield_on_return ();
+    } else {
+      i = list_next(i);
+    }
+  }
 }
 
 /** Prints thread statistics. */
@@ -224,22 +268,6 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
-
-  /* Initialize process.
-#ifdef USERPROG
-  struct process *p = malloc (sizeof (struct process));
-  if (p == NULL)
-    return TID_ERROR;
-
-  t->process = p;
-  p->thread = t;
-  p->pid = PID_INITIALIZING;
-  p->exit = false;
-  p->parent_sleeping = false;
-  p->parent = current;
-  sema_init (&p->sema, 0);
-  list_push_back (&current->children_list, &p->elem);
-#endif*/
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);

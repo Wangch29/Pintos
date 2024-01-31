@@ -73,6 +73,7 @@ process_execute (const char *process_args)
   p->cmd = process_args_copy2;
   p->pid = PID_INITIALIZING;
   p->exit = false;
+  p->exit_status = 0; // TODO: ???
   p->parent_sleeping = false;
   p->parent = cur;
   sema_init (&p->sema, 0);
@@ -246,7 +247,7 @@ process_wait (tid_t child_tid UNUSED)
         if (p->exit)
           {
             int exit_status = p->exit_status;
-            free (p);
+            free (p); //TODO: ?
             return exit_status;
           }
         /* If child process has not exited, sleep. */
@@ -254,7 +255,7 @@ process_wait (tid_t child_tid UNUSED)
         sema_down (&p->sema);
         p->parent_sleeping = false;
         int exit_status = p->exit_status;
-        free (p);
+        free (p);  //TODO: ?
         return exit_status;
       }
     }
@@ -309,7 +310,7 @@ process_exit (void)
   if (p->parent != NULL)
   {
     p->exit = true;
-    p->exit_status = cur->exit_status;
+    //p->exit_status = cur->exit_status; //TODO: !
     p->thread = NULL;
     /* If parent_sleeping is true, wake parent up. */
     if (p->parent_sleeping)
@@ -628,6 +629,15 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
+#ifdef VM
+      /* Lazy load */
+      struct thread *cur = thread_current ();
+      ASSERT (pagedir_get_page (cur->pagedir, upage) == NULL);
+
+      if (!vm_spt_install_filesys (cur->sup_page_table, upage,
+                                   file, ofs, page_read_bytes, page_zero_bytes, writable))
+        return false;
+#else
       /* Get a page of memory. */
       uint8_t *kpage = vm_frametable_allocate (PAL_USER, upage);
       if (kpage == NULL)
@@ -637,22 +647,28 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
         {
           vm_frametable_free (kpage);
-          return false; 
+          return false;
         }
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
 
       /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable)) 
+      if (!install_page (upage, kpage, writable))
         {
           vm_frametable_free (kpage);
-          return false; 
+          return false;
         }
+#endif
 
       /* Advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
+#ifdef VM
+      ofs += PGSIZE;
+#endif
+
     }
+
   return true;
 }
 
@@ -696,7 +712,8 @@ install_page (void *upage, void *kpage, bool writable)
                   && pagedir_set_page (t->pagedir, upage, kpage, writable));
 #ifdef VM
   success = success && vm_spt_install_frame (t->sup_page_table, upage, kpage);
-  //  if(success) vm_frame_unpin(kpage);
+  if (success)
+    vm_frametable_unpin (kpage);
 #endif
   return success;
 }

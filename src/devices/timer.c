@@ -31,18 +31,6 @@ static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
 static void sleep_tick (void);
 
-/** Sleep_list element. */
-struct sleeper_elem
-  {
-    struct thread* thread_elem;            /**< Sleeping thread.        */
-    int64_t sleep_ticks;                   /**< Sleep ticks time.       */
-    struct list_elem elem;                 /**< List elem               */
-  };
-
-/** List of sleeping processes. Processes are added to this
-   list when they sleep and removed when they end sleeping. */
-static struct list sleep_list;
-
 /** Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
 void
@@ -50,7 +38,6 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
-  list_init (&sleep_list);
 }
 
 /** Calibrates loops_per_tick, used to implement brief delays. */
@@ -109,13 +96,7 @@ timer_sleep (int64_t ticks)
     return;
 
   enum intr_level old_level = intr_disable ();
-
-  struct sleeper_elem *new_sleeper = malloc (sizeof (struct sleeper_elem));
-  new_sleeper->thread_elem = thread_current ();
-  new_sleeper->sleep_ticks = ticks;
-  list_push_back (&sleep_list, &new_sleeper->elem);
-  thread_block ();
-
+  thread_sleep (ticks);
   intr_set_level (old_level);
 }
 
@@ -195,32 +176,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
-  sleep_tick ();
-}
-
-/** Called by the timer interrupt handler at each timer tick.
-    Update sleep_ticks of each sleeper in sleep_list.  */
-static void
-sleep_tick (void)
-{
-  int cur_priority = thread_current ()->priority;
-  for (struct list_elem* i = list_begin(&sleep_list);
-       i != list_end(&sleep_list);)
-    {
-      struct sleeper_elem *sleeper = list_entry(i, struct sleeper_elem, elem);
-      sleeper->sleep_ticks -= 1;
-      /* When sleep_ticks is less or equal to zero, put it to ready queue. */
-      if (sleeper->sleep_ticks <= 0)
-        {
-          i = list_remove(i);
-          thread_unblock (sleeper->thread_elem);
-          /* If the woken thread have higher priority, yield. */
-          if (sleeper->thread_elem->priority > cur_priority)
-            intr_yield_on_return ();
-        } else {
-          i = list_next(i);
-        }
-    }
+  // sleep_tick ();
 }
 
 /** Returns true if LOOPS iterations waits for more than one timer

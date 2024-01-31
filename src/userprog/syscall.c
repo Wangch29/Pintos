@@ -9,6 +9,7 @@
 #include "userprog/syscall.h"
 #include "filesys/filesys.h"
 #include "filesys/file.h"
+#include "vm/suppagetable.h"
 
 /* Declare intr_frame, which is defined in "threads/interrupt.h". */
 struct intr_frame;
@@ -55,7 +56,9 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f UNUSED)
 {
-  uint32_t syscall_num = *(int *) read_user_ptr(f->esp, sizeof(int32_t));
+  uint32_t syscall_num = *(int *) read_user_ptr (f->esp, sizeof(int32_t));
+
+  thread_current ()->current_esp = f->esp;
 
   switch (syscall_num)
   {
@@ -115,10 +118,13 @@ sys_halt (struct intr_frame *f UNUSED)
 static void
 sys_exit (struct intr_frame *f UNUSED)
 {
-  int32_t exit_status_ = *(int32_t *) read_user_ptr(f->esp + sizeof(uintptr_t), sizeof (int32_t));
+  struct thread* cur = thread_current ();
+  int32_t exit_status = *(int32_t *) read_user_ptr(f->esp + sizeof(uintptr_t), sizeof (int32_t));
 
-  f->eax = exit_status_;
-  thread_current ()->exit_status = exit_status_;
+  f->eax = exit_status;
+  cur->exit_status = exit_status;
+  if (cur->process != NULL)
+    cur->process->exit_status = exit_status;
 
   thread_exit ();
 }
@@ -236,18 +242,20 @@ static void sys_read (struct intr_frame *f)
 
   /* Read from STDIN. */
   if (fd == STDIN_FILENO)
-  {
-    for (int i = 0; i < size; i++)
-      {
-        *(char *) buffer = input_getc();
-        buffer += sizeof (char *);
-      }
-    f->eax = size;
-    return;
-  }
+    {
+      for (int i = 0; i < size; i++)
+        {
+          *(char *) buffer = input_getc();
+          buffer += sizeof (char *);
+        }
+      f->eax = size;
+      return;
+    }
+
   /* Read from STDOUT. */
   if (fd == STDOUT_FILENO)
     terminate_withError ();
+
   /* Read from files. */
   struct file *file = get_file(fd);
   if (file == NULL)
@@ -255,9 +263,16 @@ static void sys_read (struct intr_frame *f)
       f->eax = -1;
       return;
     }
+
+#ifdef VM
+  load_pin_pages (buffer, size);
+#endif
   lock_acquire (&filesys_lock);
   f->eax = file_read (file, buffer, size);
   lock_release (&filesys_lock);
+#ifdef VM
+  unpin_pages (buffer, size);
+#endif
 }
 
 /** Writes size bytes from buffer to the open file fd.
@@ -275,6 +290,7 @@ sys_write (struct intr_frame *f UNUSED)
   /* Write to STDIN. */
   if (fd == STDIN_FILENO)
     terminate_withError();
+
   /* Write to STDOUT. */
   if (fd == STDOUT_FILENO)
     {
@@ -282,6 +298,7 @@ sys_write (struct intr_frame *f UNUSED)
       f->eax = size;
       return;
     }
+
   /* Write to files. */
   struct file *file = get_file(fd);
   if (file == NULL)
@@ -289,9 +306,16 @@ sys_write (struct intr_frame *f UNUSED)
     f->eax = -1;
     return;
   }
+
+#ifdef VM
+  load_pin_pages (buffer, size);
+#endif
   lock_acquire (&filesys_lock);
   f->eax = file_write (file, buffer, size);
   lock_release (&filesys_lock);
+#ifdef VM
+  unpin_pages (buffer, size);
+#endif
 }
 
 /** Changes the next byte to be read or written in open file fd to position,
@@ -358,6 +382,34 @@ sys_close (struct intr_frame *f)
         }
     }
 }
+
+#ifdef VM
+/** Load and pin all the pages in buffer. */
+void
+load_pin_pages (const void *buffer, size_t size)
+{
+  struct sup_page_table *spt = thread_current ()->sup_page_table;
+
+  uint32_t *pagedir = thread_current ()->pagedir;
+
+  for (void *upage = pg_round_down (buffer); upage < buffer + size; upage += PGSIZE)
+    {
+      vm_load_page (spt, pagedir, upage);
+      vm_spt_pin (spt, upage);
+    }
+}
+
+/** Unpin all pages in buffer. */
+void
+unpin_pages(const void *buffer, size_t size)
+{
+
+  struct sup_page_table *spt = thread_current ()->sup_page_table;
+
+  for (void *upage = pg_round_down (buffer); upage < buffer + size; upage += PGSIZE)
+    vm_spt_unpin (spt, upage);
+}
+#endif
 
 /** Attempt to read a pointer of size bytes from the user.
     If user_ptr is above PHYS_BASE or cannot be accessed,

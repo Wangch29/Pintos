@@ -10,5 +10,7 @@ void* vm_frametable_allocate (enum palloc_flags flags, void *upage);
 void vm_frametable_free (void *kpage);
 void vm_frametable_free_entry (void *kpage);
 
+void vm_frametable_pin (void *kpage);
+void vm_frametable_unpin (void *kpage);
 
 #endif /**< vm/frametable.h */

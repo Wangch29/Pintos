@@ -68,7 +68,8 @@ sort_chunks (const char *subprocess, int exit_status)
       char fn[128];
       int handle;
 
-      CHECK (wait (children[i]) == exit_status, "wait for child %zu", i);
+      int status = wait (children[i]);
+      CHECK (status == exit_status, "wait for child %zu, exit_status:%d", i, status);
 
       /* Read chunk back from file. */
       quiet = true;

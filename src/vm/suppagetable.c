@@ -1,12 +1,19 @@
 #include "suppagetable.h"
 #include <hash.h>
+#include <list.h>
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
+#include "userprog/pagedir.h"
 #include "vm/frametable.h"
+#include "vm/swap.h"
+#include "filesys/file.h"
+
+static bool vm_load_page_from_filesys (struct sup_page_table_entry *spte, void *kpage);
 
 static unsigned spt_hash_func (const struct hash_elem *elem, void *aux UNUSED);
 static bool spt_less_func (const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
 static void spt_destroy_func (struct hash_elem *elem, void *aux UNUSED);
+
 
 /** Create a new supplemental page table, and return the pointer to it. */
 struct sup_page_table*
@@ -31,7 +38,7 @@ vm_spt_destroy (struct sup_page_table* spt)
 }
 
 /** Install a frame page to sup_page_table.
-    This frame has been added to page table by pagedir_set_page ().
+    This frame will be added to page table by pagedir_set_page () in vm_load_page ().
 
     Return true if succeeds, false otherwise. */
 bool
@@ -90,7 +97,6 @@ struct sup_page_table_entry*
 vm_spt_find_page (struct sup_page_table *spt, void *upage)
 {
   struct sup_page_table_entry temp;
-
   temp.upage = upage;
 
   struct hash_elem *e = hash_find (&spt->page_table_hash, &temp.elem);
@@ -146,6 +152,7 @@ vm_load_page (struct sup_page_table *spt, uint32_t *pagedir, void *upage)
   if (new_kpage == NULL)
     return false;
 
+  /* Load new_kpage by spte->pstatus. */
   switch (spte->pstatus)
     {
       case ALL_ZERO:
@@ -153,11 +160,16 @@ vm_load_page (struct sup_page_table *spt, uint32_t *pagedir, void *upage)
         break;
 
       case ON_SWAP:
-        //TODO: to do swap.
+        vm_swap_read_from_block (new_kpage, spte->swap_index);
         break;
 
       case FROM_FILESYS:
-        //TODO: to be implemented.
+        if (!vm_load_page_from_filesys (spte, new_kpage))
+          {
+            vm_frametable_free (new_kpage);
+            return false;
+          }
+        writable = spte->writable;
         break;
 
       default:
@@ -173,34 +185,87 @@ vm_load_page (struct sup_page_table *spt, uint32_t *pagedir, void *upage)
       return false;
     }
 
+  /* Update spte. */
   spte->kpage = new_kpage;
   spte->pstatus = ON_FRAME;
   pagedir_set_dirty (pagedir, new_kpage, false);
 
+  /* Unpin kpage. */
+  vm_frametable_unpin (new_kpage);
+
   return true;
 }
 
+/** Pin an upage in sup_page_table, which must be ON_FRAME. */
+void
+vm_spt_pin (struct sup_page_table *spt, void *upage)
+{
+  struct sup_page_table_entry *spte = vm_spt_find_page (spt, upage);
+  if (spte == NULL)
+    return;
 
+  ASSERT (spte->pstatus == ON_FRAME);
+  vm_frametable_pin (spte->kpage);
+}
 
+/** Unpin an upage in sup_page_table. */
+void
+vm_spt_unpin (struct sup_page_table *spt, void *upage)
+{
+  struct sup_page_table_entry *spte = vm_spt_find_page (spt, upage);
+  if (spte == NULL)
+    PANIC ("Cannot find upage %p in spt", upage);
 
+  if (spte->pstatus == ON_FRAME)
+    vm_frametable_unpin (spte->kpage);
+}
 
+/** Install a sup_page_table entry to sup_page_table, which is from from filesys.
+    This frame will be added to page table by pagedir_set_page () in vm_load_page ().
 
+    Return true if succeeds, false otherwise. */
+bool
+vm_spt_install_filesys (struct sup_page_table *spt, void *upage,
+                        struct file* file, off_t offset, uint32_t read_bytes,
+                        uint32_t zero_bytes, bool writable)
+{
+  struct sup_page_table_entry *spte = malloc (sizeof (struct sup_page_table_entry));
 
+  spte->upage = upage;
+  spte->kpage = NULL;
+  spte->pstatus = FROM_FILESYS;
+  spte->dirty = false;
+  spte->file = file;
+  spte->file_offset = offset;
+  spte->read_bytes = read_bytes;
+  spte->zero_bytes = zero_bytes;
+  spte->writable = writable;
 
+  struct hash_elem *prev_elem = hash_insert (&spt->page_table_hash, &spte->elem);
+  if (prev_elem == NULL)
+    return true;
 
+  /* there is already an entry -- impossible state. */
+  PANIC("Duplicated SUPT entry for filesys-page");
+  return false;
+}
 
+/** Helper function for vm_load_page() to load page from filesys. */
+static bool
+vm_load_page_from_filesys (struct sup_page_table_entry *spte, void *kpage)
+{
+  file_seek (spte->file, spte->file_offset);
 
+  /* Read bytes from the file. */
+  int n_read = file_read (spte->file, kpage, spte->read_bytes);
+  if (n_read != (int) spte->read_bytes)
+    return false;
 
-
-
-
-
-
-
-
-
-
-
+  /* Remain bytes are just zero. */
+  ASSERT (spte->read_bytes + spte->zero_bytes == PGSIZE);
+  memset (kpage + n_read, 0, spte->zero_bytes);
+  return true;
+}
 
 /** Hash function for supplemental page table. */
 static unsigned
@@ -232,9 +297,7 @@ spt_destroy_func (struct hash_elem *elem, void *aux UNUSED)
       vm_frametable_free_entry (spte->kpage);
     }
   else if (spte->pstatus == ON_SWAP)
-    {
-      //vm_swap_free (spte->swap_index);
-    }
+    vm_swap_free (spte->swap_index);
 
   free (spte);
 }

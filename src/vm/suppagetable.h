@@ -2,6 +2,9 @@
 #define VM_SUPPAGETABLE_H
 
 #include <hash.h>
+#include <stdint.h>
+#include "vm/swap.h"
+#include "filesys/off_t.h"
 
 /** Status of pages. */
 enum page_status {
@@ -24,11 +27,16 @@ struct sup_page_table_entry
     void* kpage;                 /**< Kernel page. */
 
     enum page_status pstatus;    /**< Page status. */
-    void* swap_index;            /**< Swap index.  */
+    swap_index_t swap_index;     /**< Swap index.  */
 
     bool dirty;                  /**< Dirty bit.   */
 
     struct hash_elem elem;       /**< Hash elem.   */
+
+    struct file *file;
+    off_t file_offset;
+    uint32_t read_bytes, zero_bytes;
+    bool writable;
   };
 
 /** Life cycle functions. */
@@ -43,11 +51,18 @@ bool vm_spt_install_zeropage (struct sup_page_table* spt, void* upage);
 struct sup_page_table_entry* vm_spt_find_page (struct sup_page_table *spt, void *upage);
 bool vm_spt_has_page (struct sup_page_table *spt, void *upage);
 
+/** Set functions. */
 bool vm_spt_set_dirty (struct sup_page_table *spt, void *upage, bool dirty);
 
 /** Page loading functions. */
 bool vm_load_page (struct sup_page_table *spt, uint32_t *pagedir, void *upage);
+bool vm_spt_install_filesys (struct sup_page_table *spt, void *upage,
+                        struct file * file, off_t offset, uint32_t read_bytes,
+                        uint32_t zero_bytes, bool writable);
 
+/** Pin and unpin page. */
+void vm_spt_pin (struct sup_page_table *spt, void *upage);
+void vm_spt_unpin (struct sup_page_table *spt, void *upage);
 
 
 
