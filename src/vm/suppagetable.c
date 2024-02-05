@@ -97,6 +97,8 @@ vm_spt_install_zeropage (struct sup_page_table* spt, void* upage)
 struct sup_page_table_entry*
 vm_spt_find_page (struct sup_page_table *spt, void *upage)
 {
+  ASSERT (is_user_vaddr (upage));
+
   struct sup_page_table_entry temp;
   temp.upage = upage;
 
