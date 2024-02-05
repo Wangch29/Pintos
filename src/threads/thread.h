@@ -89,7 +89,6 @@ struct thread
     /* Owned by thread.c. */
     tid_t tid;                          /**< Thread identifier.                 */
     enum thread_status status;          /**< Thread state.                      */
-    int32_t exit_status;                /**< Exit return state.                 */
     char name[16];                      /**< Name (for debugging purposes).     */
     uint8_t *stack;                     /**< Saved stack pointer.               */
     int32_t sleep_ticks;                 /**< The remaining sleeping time.       */
@@ -119,18 +118,18 @@ struct thread
 
     struct list file_descriptor_table;  /**< File Descriptor Table.             */
     int next_fd;                        /**< The next file descriptor number.   */
-
     struct file *execute_file;          /**< File executing on.                 */
 
-    uint8_t* current_esp;
+    uint8_t* user_esp;                  /**< Its user thread's eps.             */
 #endif
 
 #ifdef VM
-    struct sup_page_table *sup_page_table; /**< Supplemental page table.           */
+    struct sup_page_table *sup_page_table; /**< Supplemental page table.        */
+    struct list mmap_table;             /**< Memory-mapped descriptor table.    */
 #endif
 
     /* Owned by thread.c. */
-    unsigned magic;                     /**< Detects stack overflow.             */
+    unsigned magic;                     /**< Detects stack overflow.            */
   };
 
 /** If false (default), use round-robin scheduler.

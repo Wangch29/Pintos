@@ -9,7 +9,7 @@ static const uint32_t SECTORS_PER_PAGE = ((uint32_t) (PGSIZE / BLOCK_SECTOR_SIZE
 /** The maximum number of swapped pages stored in swap block. Default: 8192 / 8 = 1024. */
 static uint32_t MAX_SWAP_PAGES_NUM;
 
-/** */
+/** The swap bitmap, to track the availability of empty memory. */
 static struct bitmap *swap_bitmap;
 
 /** Initialize global_swap_block. */

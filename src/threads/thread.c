@@ -759,7 +759,6 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
 
   t->waiting_lock = NULL;
-  t->exit_status = 0;
 
   /* When not in mlfqs mode, set priority and priority donation devices. */
   if (!thread_mlfqs)
@@ -795,6 +794,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->process = NULL;
   t->execute_file = NULL;
   t->next_fd = 2;
+#endif
+
+#ifdef VM
+  list_init (&t->mmap_table);
 #endif
 
   t->magic = THREAD_MAGIC;

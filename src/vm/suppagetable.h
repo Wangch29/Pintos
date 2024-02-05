@@ -3,6 +3,7 @@
 
 #include <hash.h>
 #include <stdint.h>
+#include "userprog/process.h"
 #include "vm/swap.h"
 #include "filesys/off_t.h"
 
@@ -57,13 +58,15 @@ bool vm_spt_set_dirty (struct sup_page_table *spt, void *upage, bool dirty);
 /** Page loading functions. */
 bool vm_load_page (struct sup_page_table *spt, uint32_t *pagedir, void *upage);
 bool vm_spt_install_filesys (struct sup_page_table *spt, void *upage,
-                        struct file * file, off_t offset, uint32_t read_bytes,
-                        uint32_t zero_bytes, bool writable);
+        struct file * file, off_t offset, uint32_t read_bytes, uint32_t zero_bytes, bool writable);
+
+/** Unmapping function. */
+bool vm_spt_mm_unmap (struct sup_page_table *spt, uint32_t *pagedir,
+        void *upage, struct file *file, off_t offset, size_t bytes);
 
 /** Pin and unpin page. */
 void vm_spt_pin (struct sup_page_table *spt, void *upage);
 void vm_spt_unpin (struct sup_page_table *spt, void *upage);
-
 
 
 

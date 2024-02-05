@@ -1,6 +1,7 @@
 #include "suppagetable.h"
 #include <hash.h>
 #include <list.h>
+#include <stdbool.h>
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
@@ -248,6 +249,59 @@ vm_spt_install_filesys (struct sup_page_table *spt, void *upage,
   /* there is already an entry -- impossible state. */
   PANIC("Duplicated SUPT entry for filesys-page");
   return false;
+}
+
+/** Unmaps a memory-mapped upage. */
+bool
+vm_spt_mm_unmap (struct sup_page_table *spt, uint32_t *pagedir,
+        void *upage, struct file *file, off_t offset, size_t bytes)
+{
+  struct sup_page_table_entry *spte = vm_spt_find_page (spt, upage);
+  if (spte == NULL)
+    return false;
+
+  if (spte->pstatus == ON_FRAME)
+    {
+      ASSERT (spte->kpage != NULL);
+      vm_frametable_pin (spte->kpage);
+    }
+
+  bool is_dirty = spte->dirty;
+  switch (spte->pstatus)
+    {
+      case ON_FRAME:
+        is_dirty = is_dirty || pagedir_is_dirty (pagedir, spte->upage);
+        is_dirty = is_dirty || pagedir_is_dirty (pagedir, spte->kpage);
+        if (is_dirty)
+          file_write_at (spte->file, spte->kpage, bytes, offset);
+        vm_frametable_free (spte->kpage);
+        pagedir_clear_page (pagedir, spte->upage);
+        break;
+
+      case FROM_FILESYS:
+        break;
+
+      case ON_SWAP:
+        ASSERT (spte->kpage == NULL);
+        is_dirty = spte->dirty || pagedir_is_dirty (pagedir, spte->upage);
+        if (is_dirty)
+          {
+            struct thread* cur = thread_current ();
+            if (!vm_load_page (cur->sup_page_table, cur->pagedir, upage))
+              PANIC ("Load page fail!");
+            ASSERT (spte->kpage != NULL);
+
+            return vm_spt_mm_unmap (spt, pagedir, upage, file, offset, bytes);
+          }
+        vm_swap_free (spte->swap_index);
+        break;
+
+      default:
+        PANIC ("Unreachable state");
+    }
+
+  hash_delete (&spt->page_table_hash, &spte->elem);
+  return true;
 }
 
 /** Helper function for vm_load_page() to load page from filesys. */

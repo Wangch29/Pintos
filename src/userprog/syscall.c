@@ -31,6 +31,8 @@ static void sys_write (struct intr_frame *);
 static void sys_seek (struct intr_frame *);
 static void sys_tell (struct intr_frame *);
 static void sys_close (struct intr_frame *);
+static void sys_mmap (struct intr_frame *);
+static void sys_munmap (struct intr_frame *);
 
 /* Functions to support reading from and writing to user memory for system calls.*/
 static void* read_user_ptr (void *user_ptr, size_t size);
@@ -52,13 +54,14 @@ syscall_init (void)
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
-/** Handle system calls.   */
+/** Handle system calls. */
 static void
 syscall_handler (struct intr_frame *f UNUSED)
 {
   uint32_t syscall_num = *(int *) read_user_ptr (f->esp, sizeof(int32_t));
 
-  thread_current ()->current_esp = f->esp;
+  /* Save user stack pointer. */
+  thread_current ()->user_esp = f->esp;
 
   switch (syscall_num)
   {
@@ -101,6 +104,12 @@ syscall_handler (struct intr_frame *f UNUSED)
     case SYS_CLOSE:
       sys_close (f);
       break;
+    case SYS_MMAP:
+      sys_mmap (f);
+      break;
+    case SYS_MUNMAP:
+      sys_munmap (f);
+      break;
     default:
       printf ("Cannot find this system call!\n");
       thread_exit ();
@@ -122,7 +131,6 @@ sys_exit (struct intr_frame *f UNUSED)
   int32_t exit_status = *(int32_t *) read_user_ptr(f->esp + sizeof(uintptr_t), sizeof (int32_t));
 
   f->eax = exit_status;
-  cur->exit_status = exit_status;
   if (cur->process != NULL)
     cur->process->exit_status = exit_status;
 
@@ -361,7 +369,7 @@ sys_tell (struct intr_frame *f)
 static void
 sys_close (struct intr_frame *f)
 {
-  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof(uintptr_t)), sizeof (uint32_t *));
+  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof (uintptr_t)), sizeof (uint32_t *));
   struct thread *current = thread_current ();
 
   if (fd <= 1)
@@ -382,6 +390,126 @@ sys_close (struct intr_frame *f)
         }
     }
 }
+
+#ifdef VM
+/**
+ * Handle mmap syscall.
+ */
+static void sys_mmap (struct intr_frame *f)
+{
+  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof(uintptr_t)), sizeof(uintptr_t));
+  void *mapped_addr = *(void **) read_user_ptr ((f->esp + 2 * sizeof (uintptr_t)), sizeof (uintptr_t));
+
+  /** Check if mapped_addr and fd is valid. */
+  if (!is_user_vaddr (mapped_addr) || pg_ofs (mapped_addr) != 0 || mapped_addr == NULL || fd <= 1)
+    {
+      f->eax = -1;
+      return;
+    }
+
+  lock_acquire (&filesys_lock);
+
+  struct thread* cur = thread_current ();
+
+  /* Open file. */
+  struct file *file = get_file (fd);
+  if (file)
+    file = file_reopen (file);  //TODO: ???
+  if (file == NULL)
+    goto SYS_MMAP_FAIL;
+
+  size_t filesize = file_length (file);
+  if(filesize == 0)
+    goto SYS_MMAP_FAIL;
+
+  /* Check if all mapped pages are emtpy. */
+  for (size_t offset = 0; offset < filesize; offset += PGSIZE)
+    {
+      void *mapped_page = mapped_addr + offset;
+      if (vm_spt_has_page (cur->sup_page_table, mapped_page))
+        goto SYS_MMAP_FAIL;
+    }
+
+  /* Mapping file to pages. */
+  for (size_t offset = 0; offset < filesize; offset += PGSIZE)
+    {
+      void *mapped_page = mapped_addr + offset;
+
+      size_t read_bytes = offset + PGSIZE < filesize ? PGSIZE : filesize - offset;
+      size_t zero_bytes = PGSIZE - read_bytes;
+
+      if (!vm_spt_install_filesys
+      (cur->sup_page_table, mapped_page, file, offset, read_bytes, zero_bytes, true))
+        goto SYS_MMAP_FAIL;
+    }
+
+  /* Create new mmap_table_entry. */
+  mapid_t new_id;
+  if (list_empty (&cur->mmap_table))
+    new_id = 1;
+  else
+    new_id = list_entry (list_back (&cur->mmap_table), struct mmap_table_entry, elem)->map_id + 1;
+
+  struct mmap_table_entry *mte = (struct mmap_table_entry*) malloc (sizeof (struct mmap_table_entry));
+  mte->map_id = new_id;
+  mte->upage = mapped_addr;
+  mte->file = file;
+  mte->size = filesize;
+  list_push_back (&cur->mmap_table, &mte->elem);
+
+  /* Mapping succeeds. */
+  lock_release (&filesys_lock);
+  f->eax = new_id;
+  return;
+
+SYS_MMAP_FAIL:
+  lock_release (&filesys_lock);
+  f->eax = -1;
+  return;
+}
+
+/**
+ * Handle munmap syscall.
+ */
+static void sys_munmap (struct intr_frame *f)
+{
+  uint32_t map_id = *(uint32_t *) read_user_ptr ((f->esp + sizeof(uintptr_t)), sizeof(uintptr_t));
+
+  struct thread* cur = thread_current ();
+
+  /* Search for the map_id's mmap_table_entry. */
+  for (struct list_elem *e = list_begin (&cur->mmap_table);
+       e!= list_end (&cur->mmap_table); e = list_next (e))
+    {
+      struct mmap_table_entry *mte = list_entry (e, struct mmap_table_entry, elem);
+
+      if (mte->map_id == map_id)
+      /* Found the map_id, and start to unmap. */
+        {
+          lock_acquire (&filesys_lock);
+
+          size_t filesize = file_length (mte->file);
+          for (size_t offset = 0; offset < filesize; offset += PGSIZE)
+            {
+              void *addr = mte->upage + offset;
+              size_t bytes = (offset + PGSIZE < filesize ? PGSIZE : filesize - offset);
+              vm_spt_mm_unmap (cur->sup_page_table, cur->pagedir, addr, mte->file, offset, bytes);
+            }
+
+          list_remove (e);
+          file_close (mte->file);
+          free (mte);
+
+          lock_release (&filesys_lock);
+          return;
+        }
+    }
+
+  /* Cannot find the map_id. */
+  f->eax = -1;
+  return;
+}
+#endif
 
 #ifdef VM
 /** Load and pin all the pages in buffer. */
@@ -470,7 +598,9 @@ read_user_str (char* user_ptr_)
 static void
 terminate_withError (void)
 {
-  thread_current ()->exit_status = -1;
+  struct thread* cur = thread_current ();
+  if (cur != NULL)
+    cur->process->exit_status = -1;
   thread_exit ();
 }
 

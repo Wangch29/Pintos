@@ -122,7 +122,7 @@ start_process (void *process_)
   if (process_args_copy == NULL)
     {
       palloc_free_page (process_args);
-      cur->exit_status = -1;
+      cur->process->exit_status = -1;
       cur->process->exit = true;
       cur->process->parent->child_load_success = false;
       sema_up (&cur->process->parent->wait_child_load);
@@ -145,7 +145,7 @@ start_process (void *process_)
       palloc_free_page (process_args);
       palloc_free_page (process_args_copy);
       /* Set exit_status to -1. */
-      cur->exit_status = -1;
+      cur->process->exit_status = -1;
       cur->process->exit = true;
       cur->process->parent->child_load_success = false;
       /* Wake up parent process. */
@@ -201,11 +201,12 @@ start_process (void *process_)
 
   cur->process->pid = cur->tid;
 
-  //printf("STACK SET. ESP: %p\n", if_.esp);
-  //hex_dump((uintptr_t)if_.esp, if_.esp, 100, true);
+  // printf("STACK SET. ESP: %p\n", if_.esp);
+  // hex_dump((uintptr_t)if_.esp, if_.esp, 100, true);
 
   palloc_free_page (process_args);
   palloc_free_page (process_args_copy);
+  cur->process->cmd = NULL;
 
   /* Tell its parent loading succeed, and wake it up! */
   cur->process->parent->child_load_success = true;
@@ -247,7 +248,7 @@ process_wait (tid_t child_tid UNUSED)
         if (p->exit)
           {
             int exit_status = p->exit_status;
-            free (p); //TODO: ?
+            free (p);
             return exit_status;
           }
         /* If child process has not exited, sleep. */
@@ -255,7 +256,7 @@ process_wait (tid_t child_tid UNUSED)
         sema_down (&p->sema);
         p->parent_sleeping = false;
         int exit_status = p->exit_status;
-        free (p);  //TODO: ?
+        free (p);
         return exit_status;
       }
     }
@@ -270,7 +271,7 @@ process_exit (void)
   struct process *p = cur->process;
   uint32_t *pd;
 
-  printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
+  printf ("%s: exit(%d)\n", cur->name, p->exit_status);
 
   /* Close executing file. */
   if (cur->execute_file)
@@ -280,6 +281,7 @@ process_exit (void)
       file_close (cur->execute_file);
       lock_release (&filesys_lock);
     }
+
   /* Close file_descriptor_table */
   lock_acquire (&filesys_lock);
   while (!list_empty (&cur->file_descriptor_table))
@@ -290,6 +292,31 @@ process_exit (void)
     free (fte);
   }
   lock_release (&filesys_lock);
+
+#ifdef VM
+  /* Close memory-mapped files. */
+  struct list *mmap_list = &cur->mmap_table;
+  lock_acquire (&filesys_lock);
+  while (!list_empty (mmap_list))
+    {
+      struct list_elem *e = list_begin (mmap_list);
+      struct mmap_table_entry *mte = list_entry (e, struct mmap_table_entry, elem);
+      /* Free mmap_table_entry. */
+
+      size_t filesize = file_length (mte->file);
+      for (size_t offset = 0; offset < filesize; offset += PGSIZE)
+        {
+          void *addr = mte->upage + offset;
+          size_t bytes = (offset + PGSIZE < filesize ? PGSIZE : filesize - offset);
+          vm_spt_mm_unmap (cur->sup_page_table, cur->pagedir, addr, mte->file, offset, bytes);
+        }
+
+      list_remove (e);
+      file_close (mte->file);
+      free (mte);
+    }
+  lock_release (&filesys_lock);
+#endif
 
   /* As a parent, set its children process's parent to NULL.
      If its child has existed, free its process. */

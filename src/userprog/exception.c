@@ -94,7 +94,7 @@ kill (struct intr_frame *f)
       printf ("%s: dying due to interrupt %#04x (%s).\n",
               thread_name (), f->vec_no, intr_name (f->vec_no));
       intr_dump_frame (f);
-      thread_current ()->exit_status = -1;
+      thread_current ()->process->exit_status = -1;
       thread_exit (); 
 
     case SEL_KCSEG:
@@ -154,13 +154,6 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
- /*
-  printf ("Page fault at %p: %s error %s page in %s context.\n",
-          fault_addr,
-          not_present ? "not present" : "rights violation",
-          write ? "writing" : "reading",
-          user ? "user" : "kernel");*/
-
 #if VM
   /* When access NULL(0x0), invalid. */
   if (fault_addr == NULL)
@@ -173,8 +166,12 @@ page_fault (struct intr_frame *f)
   void* fault_page = pg_round_down (fault_addr);
   struct thread *cur = thread_current ();
 
-  void* esp = user ? f->esp : cur->current_esp; //TODO: ???
-  /* If valid to grow the stack. */
+  /* f stores the latest interrupt frame.
+   * If user page_fault, user's stack pointer is f->esp.
+   * If kernel page_fault, user's stack pointer stored in cur->user_esp. */
+  void* esp = user ? f->esp : cur->user_esp;
+
+  /* Grow the stack. */
   bool is_stack_area = fault_addr >= MAX_STACK_BASE && fault_addr < PHYS_BASE;
   bool valid_stack_access = fault_addr >= esp - 32;
   if (valid_stack_access && is_stack_area)
@@ -182,7 +179,7 @@ page_fault (struct intr_frame *f)
     if (!vm_spt_has_page (cur->sup_page_table, fault_page))
       vm_spt_install_zeropage (cur->sup_page_table, fault_page);
 
-  /* Page loading. If fault_page has no spt entry, goto page_fault_invalid. */
+  /* Page loading. */
   if (!vm_load_page (cur->sup_page_table, cur->pagedir, fault_page))
     goto page_fault_invalid;
 
