@@ -68,7 +68,7 @@ last_mask (const struct bitmap *b)
   int last_bits = b->bit_cnt % ELEM_BITS;
   return last_bits ? ((elem_type) 1 << last_bits) - 1 : (elem_type) -1;
 }
-
+
 /** Creation and destruction. */
 
 /** Creates and returns a pointer to a newly allocated bitmap with room for
@@ -137,7 +137,7 @@ bitmap_size (const struct bitmap *b)
 {
   return b->bit_cnt;
 }
-
+
 /** Setting and testing single bits. */
 
 /** Atomically sets the bit numbered IDX in B to VALUE. */
