@@ -122,7 +122,7 @@ sema_up (struct semaphore *sema)
   if (!list_empty (&sema->waiters))
     {
       /* Iterate to find the thread having the highest priority. */
-      struct list_elem *e = list_min(&sema->waiters, thread_compare_priority, NULL);
+      struct list_elem *e = list_min (&sema->waiters, thread_compare_priority, NULL);
       thread = list_entry (e, struct thread, elem);
       list_remove (e);
       thread_unblock (thread);
@@ -377,7 +377,7 @@ cond_wait (struct condition *cond, struct lock *lock)
   
   sema_init (&waiter.semaphore, 0);
   waiter.priority = thread_current ()->priority;
-  list_insert_ordered(&cond->waiters, &waiter.elem,
+  list_insert_ordered (&cond->waiters, &waiter.elem,
                       cond_compare_priority, NULL);
   lock_release (lock);
   sema_down (&waiter.semaphore);
