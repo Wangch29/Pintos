@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <debug.h>
 #include "threads/malloc.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
@@ -34,7 +35,14 @@ struct cache_block_entry
     bool valid;                        /**< Entry validity.       */
     bool dirty;                        /**< Entry dirty.          */
     bool used;                         /**< Used recently.        */
+
     struct lock entry_lock;            /**< */
+    struct condition read_possible;    /**< */
+    struct condition write_possible;    /**< */
+    struct condition safe_to_evict;        /**< */
+    int readers;
+    int writers;
+    int waiting_writers;
 
     uint8_t data[BLOCK_SECTOR_SIZE];   /**< Sector data.          */
   };
@@ -50,8 +58,8 @@ static uint8_t clock_idx;
 
 static struct cache_block_entry * find_entry (block_sector_t sector);
 static void write_back (int index);
-static struct cache_block_entry * find_empty (void);
-static struct cache_block_entry * clock_eviction (void);
+static struct cache_block_entry * find_empty (block_sector_t sector_idx);
+static struct cache_block_entry * clock_eviction (block_sector_t sector_idx);
 
 static void flush_periodically (void);
 static void create_flush_thread (void);
@@ -69,6 +77,12 @@ cache_init (void)
   for (int i = 0; i < CACHE_BLOCK_NUMBER; i++)
     {
       lock_init (&cache_array[i].entry_lock);
+      cond_init (&cache_array[i].read_possible);
+      cond_init (&cache_array[i].write_possible);
+      cond_init (&cache_array[i].safe_to_evict);
+      cache_array[i].readers = 0;
+      cache_array[i].writers = 0;
+      cache_array[i].waiting_writers = 0;
       cache_array[i].valid = false;
     }
   create_flush_thread ();
@@ -93,31 +107,30 @@ cache_read (block_sector_t sector, void *buffer, int sector_ofs, int chunk_size)
   ASSERT(sector_ofs + chunk_size <= BLOCK_SECTOR_SIZE);
 
   lock_acquire (&buffer_cache_lock);
+
   struct cache_block_entry *entry = find_entry (sector);
-
-  /* Cache hit. */
-  if (entry != NULL)
-    {
-      lock_acquire (&entry->entry_lock);
-      lock_release (&buffer_cache_lock);
-      memcpy (buffer, entry->data + sector_ofs, chunk_size);
-      entry->used = true;
-    }
-
   /* Cache miss. */
-  else
-    {
-      entry = find_empty ();
-      lock_acquire (&entry->entry_lock);
-      lock_release (&buffer_cache_lock);
+  if (entry == NULL)
+    entry = find_empty (sector);
 
-      block_read (fs_device, sector, entry->data);
-      memcpy (buffer, entry->data + sector_ofs, chunk_size);
-      entry->sector_idx = sector;
-      entry->valid = true;
-      entry->dirty = false;
-      entry->used = true;
-    }
+  lock_acquire (&entry->entry_lock);
+  lock_release (&buffer_cache_lock);
+  /* Wait while a writer is writing or waiting to write. */
+  while (entry->writers > 0 || entry->waiting_writers > 0)
+    cond_wait (&entry->read_possible, &entry->entry_lock);
+  entry->readers++;
+  lock_release (&entry->entry_lock);
+
+  memcpy (buffer, entry->data + sector_ofs, chunk_size);
+
+  lock_acquire (&entry->entry_lock);
+  entry->used = true;
+  entry->readers--;
+  /* If this is the last reader, signal possible waiting writers. */
+  if (entry->readers == 0 && entry->waiting_writers > 0)
+    cond_signal (&entry->write_possible, &entry->entry_lock);
+  else if (entry->readers == 0 && entry->waiting_writers == 0)
+    cond_signal (&entry->safe_to_evict, &entry->entry_lock);
 
   lock_release (&entry->entry_lock);
 }
@@ -143,32 +156,34 @@ cache_write (block_sector_t sector, void *buffer, int sector_ofs, int chunk_size
   lock_acquire (&buffer_cache_lock);
 
   struct cache_block_entry *entry = find_entry (sector);
+  /* Cache miss. */
+  if (entry == NULL)
+    entry = find_empty (sector);
 
-  /* Cache hit. */
-  if (entry != NULL)
+  lock_acquire (&entry->entry_lock);
+  lock_release (&buffer_cache_lock);
+  entry->waiting_writers++;
+  while (entry->readers > 0 || entry->writers > 0)
     {
-      lock_acquire (&entry->entry_lock);
-      lock_release (&buffer_cache_lock);
-      memcpy (entry->data + sector_ofs, buffer, chunk_size);
-      entry->used = true;
-      entry->dirty = true;
+      cond_wait (&entry->write_possible, &entry->entry_lock);
     }
+  entry->waiting_writers--;
+  entry->writers++;
+  lock_release (&entry->entry_lock);
 
-    /* Cache miss. */
+  memcpy (entry->data + sector_ofs, buffer, chunk_size);
+
+  lock_acquire (&entry->entry_lock);
+  entry->used = true;
+  entry->dirty = true;
+  entry->writers--;
+
+  if (entry->waiting_writers > 0)
+    cond_signal (&entry->write_possible, &entry->entry_lock);
+  else if (entry->readers > 0)
+    cond_broadcast (&entry->read_possible, &entry->entry_lock);
   else
-    {
-      entry = find_empty ();
-      lock_acquire (&entry->entry_lock);
-      lock_release (&buffer_cache_lock);
-
-      block_read (fs_device, sector, entry->data);
-      memcpy (entry->data + sector_ofs, buffer, chunk_size);
-      entry->sector_idx = sector;
-      entry->valid = true;
-      entry->dirty = true;
-      entry->used = true;
-    }
-
+    cond_signal (&entry->safe_to_evict, &entry->entry_lock);
   lock_release (&entry->entry_lock);
 }
 
@@ -231,9 +246,6 @@ static void
 write_back (int index)
 {
   struct cache_block_entry *entry = &cache_array[index];
-
-  ASSERT (entry->valid);
-
   block_write (fs_device, entry->sector_idx, entry->data);
   entry->dirty = false;
 }
@@ -263,20 +275,24 @@ find_entry (block_sector_t sector)
  * @return A pointer to the first available cache entry.
  */
 static struct cache_block_entry *
-find_empty (void)
+find_empty (block_sector_t sector_idx)
 {
   /* Search for an empty entry. */
   for (int i = 0; i < CACHE_BLOCK_NUMBER; i++)
     {
       if (!cache_array[i].valid)
         {
-          cache_array[i].valid = true;
+          struct cache_block_entry * entry = &cache_array[i];
+          entry->sector_idx = sector_idx;
+          block_read (fs_device, sector_idx, entry->data);
+          entry->dirty = false;
+          entry->valid = true;
           return &cache_array[i];
         }
     }
 
   /* Eviction and get an empty entry. */
-  return clock_eviction ();
+  return clock_eviction (sector_idx);
 }
 
 /**
@@ -288,19 +304,34 @@ find_empty (void)
  * @return A pointer to the evicted cache entry, or NULL if no entry was evicted.
  */
 static struct cache_block_entry *
-clock_eviction (void)
+clock_eviction (block_sector_t sector_idx)
 {
+  ASSERT (lock_held_by_current_thread (&buffer_cache_lock));
+
   struct cache_block_entry *entry = NULL;
 
   for (int i = 0; i < 2 * CACHE_BLOCK_NUMBER; i++)
     {
       if (!cache_array[clock_idx].used)
         {
+          entry = &cache_array[clock_idx];
+
+          lock_acquire (&entry->entry_lock);
+          entry->valid = false;
+          while (entry->readers > 0 || entry->writers > 0 || entry->waiting_writers > 0)
+            cond_wait (&entry->safe_to_evict, &entry->entry_lock);
+
           if (cache_array[clock_idx].dirty)
             write_back (clock_idx);
 
-          entry = &cache_array[clock_idx];
-          entry->valid = false;
+          block_read (fs_device, sector_idx, entry->data);
+          entry->dirty = false;
+          entry->sector_idx = sector_idx;
+          entry->valid = true;
+          entry->used = true;
+
+          lock_release (&entry->entry_lock);
+
           clock_idx = (clock_idx + 1) % CACHE_BLOCK_NUMBER;
           break;
         }
