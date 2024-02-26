@@ -19,11 +19,16 @@ free_map_init (void)
   bitmap_mark (free_map, ROOT_DIR_SECTOR);
 }
 
-/** Allocates CNT consecutive sectors from the free map and stores
-   the first into *SECTORP.
-   Returns true if successful, false if not enough consecutive
-   sectors were available or if the free_map file could not be
-   written. */
+/**
+ * @brief Allocates CNT consecutive sectors from the free map and stores
+ * the first into *SECTORP.
+ *
+ * @param cnt Number of sectors to allocate.
+ * @param sectorp Pointer to a block_sector_t to store the first sector into.
+ *
+ * @return true if successful, false if not enough consecutive sectors were available
+ *         or if the free_map file could not be written.
+ */
 bool
 free_map_allocate (size_t cnt, block_sector_t *sectorp)
 {

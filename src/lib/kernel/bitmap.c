@@ -201,7 +201,7 @@ bitmap_test (const struct bitmap *b, size_t idx)
   ASSERT (idx < b->bit_cnt);
   return (b->bits[elem_idx (idx)] & bit_mask (idx)) != 0;
 }
-
+
 /** Setting and testing multiple bits. */
 
 /** Sets all bits in B to VALUE. */
