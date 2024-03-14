@@ -91,7 +91,9 @@ struct thread
     enum thread_status status;          /**< Thread state.                      */
     char name[16];                      /**< Name (for debugging purposes).     */
     uint8_t *stack;                     /**< Saved stack pointer.               */
-    int32_t sleep_ticks;                 /**< The remaining sleeping time.       */
+    struct dir* cwd;                    /**< Current working directory.         */
+
+    int32_t sleep_ticks;                /**< The remaining sleeping time.       */
 
     uint8_t priority;                   /**< Priority.                          */
     uint8_t base_priority;              /**< Base priority.                     */

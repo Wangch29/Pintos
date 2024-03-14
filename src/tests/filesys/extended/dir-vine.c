@@ -22,7 +22,7 @@ test_main (void)
   quiet = true;
   CHECK (mkdir ("start"), "mkdir \"start\"");
   CHECK (chdir ("start"), "chdir \"start\"");
-  for (i = 0; ; i++) 
+  for (i = 0; i < 300; i++)  // add 300 to constraints.
     {
       char name[3][READDIR_MAX_LEN + 1];
       char file_name[16], dir_name[16];

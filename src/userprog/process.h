@@ -43,7 +43,7 @@ struct mmap_table_entry
   {
     mapid_t map_id;              /**< Map ID.             */
     void *upage;                 /**< The upage mapped to.*/
-    struct File *file;           /**< File pointer.       */
+    struct file *file;           /**< File pointer.       */
     size_t size;                 /**< File size.          */
     struct list_elem elem;       /**< List_elem.          */
   };

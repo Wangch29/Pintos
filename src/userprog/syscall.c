@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <syscall-nr.h>
+#include <user/syscall.h>
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
@@ -9,6 +10,8 @@
 #include "userprog/syscall.h"
 #include "filesys/filesys.h"
 #include "filesys/file.h"
+#include "filesys/directory.h"
+#include "filesys/inode.h"
 #include "vm/suppagetable.h"
 
 /* Declare intr_frame, which is defined in "threads/interrupt.h". */
@@ -34,10 +37,17 @@ static void sys_close (struct intr_frame *);
 static void sys_mmap (struct intr_frame *);
 static void sys_munmap (struct intr_frame *);
 
+/* File system. */
+static void sys_chdir (struct intr_frame *);
+static void sys_mkdir (struct intr_frame *);
+static void sys_readdir (struct intr_frame *f);
+static void sys_isdir (struct intr_frame *f);
+static void sys_inumber (struct intr_frame *f);
+
 /* Functions to support reading from and writing to user memory for system calls.*/
-static void* read_user_ptr (void *user_ptr, size_t size);
-static void* write_user_ptr (void *user_ptr, size_t size);
-static char* read_user_str (char* user_ptr_);
+static void *read_user_ptr (void *user_ptr, size_t size);
+static void *write_user_ptr (void *user_ptr, size_t size);
+static char *read_user_str (char *user_ptr_);
 static int get_user (const uint8_t *uaddr);
 static bool put_user (uint8_t *udst, uint8_t byte);
 
@@ -45,7 +55,7 @@ static bool put_user (uint8_t *udst, uint8_t byte);
 static void terminate_withError (void);
 
 /* Functions about file. */
-static struct file* get_file (int);
+static struct file *get_file (int);
 static void free_descriptor_table (void);
 
 void
@@ -58,62 +68,57 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f UNUSED)
 {
-  uint32_t syscall_num = *(int *) read_user_ptr (f->esp, sizeof(int32_t));
+  uint32_t syscall_num = *(int *) read_user_ptr (f->esp, sizeof (int32_t));
 
   /* Save user stack pointer. */
   thread_current ()->user_esp = f->esp;
 
   switch (syscall_num)
-  {
-    case SYS_HALT:
-      sys_halt (f);
+    {
+      case SYS_HALT:sys_halt (f);
       break;
-    case SYS_EXIT:
-      sys_exit (f);
+      case SYS_EXIT:sys_exit (f);
       break;
-    case SYS_EXEC:
-      sys_exec (f);
+      case SYS_EXEC:sys_exec (f);
       break;
-    case SYS_WAIT:
-      sys_wait (f);
+      case SYS_WAIT:sys_wait (f);
       break;
-    case SYS_CREATE:
-      sys_create (f);
+      case SYS_CREATE:sys_create (f);
       break;
-    case SYS_REMOVE:
-      sys_remove (f);
+      case SYS_REMOVE:sys_remove (f);
       break;
-    case SYS_OPEN:
-      sys_open (f);
+      case SYS_OPEN:sys_open (f);
       break;
-    case SYS_FILESIZE:
-      sys_filesize (f);
+      case SYS_FILESIZE:sys_filesize (f);
       break;
-    case SYS_READ:
-      sys_read (f);
+      case SYS_READ:sys_read (f);
       break;
-    case SYS_WRITE:
-      sys_write (f);
+      case SYS_WRITE:sys_write (f);
       break;
-    case SYS_SEEK:
-      sys_seek (f);
+      case SYS_SEEK:sys_seek (f);
       break;
-    case SYS_TELL:
-      sys_tell (f);
+      case SYS_TELL:sys_tell (f);
       break;
-    case SYS_CLOSE:
-      sys_close (f);
+      case SYS_CLOSE:sys_close (f);
       break;
-    case SYS_MMAP:
-      sys_mmap (f);
+      case SYS_MMAP:sys_mmap (f);
       break;
-    case SYS_MUNMAP:
-      sys_munmap (f);
+      case SYS_MUNMAP:sys_munmap (f);
       break;
-    default:
-      printf ("Cannot find this system call!\n");
+      case SYS_CHDIR:sys_chdir (f);
+      break;
+      case SYS_MKDIR:sys_mkdir (f);
+      break;
+      case SYS_READDIR:sys_readdir (f);
+      break;
+      case SYS_ISDIR:sys_isdir (f);
+      break;
+      case SYS_INUMBER:sys_inumber (f);
+      break;
+
+      default:printf ("Cannot find this system call!\n");
       thread_exit ();
-  }
+    }
 }
 
 /** Terminates Pintos by calling shutdown_power_off(). */
@@ -127,8 +132,8 @@ sys_halt (struct intr_frame *f UNUSED)
 static void
 sys_exit (struct intr_frame *f UNUSED)
 {
-  struct thread* cur = thread_current ();
-  int32_t exit_status = *(int32_t *) read_user_ptr(f->esp + sizeof(uintptr_t), sizeof (int32_t));
+  struct thread *cur = thread_current ();
+  int32_t exit_status = *(int32_t *) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (int32_t));
 
   f->eax = exit_status;
   if (cur->process != NULL)
@@ -152,7 +157,7 @@ sys_exec (struct intr_frame *f UNUSED)
 static void
 sys_wait (struct intr_frame *f UNUSED)
 {
-  f->eax = process_wait (*(tid_t *) read_user_ptr (f->esp + sizeof(uintptr_t), sizeof (tid_t)));
+  f->eax = process_wait (*(tid_t *) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (tid_t)));
 }
 
 /** Creates a new file called file initially initial_size bytes in size.
@@ -161,15 +166,15 @@ sys_wait (struct intr_frame *f UNUSED)
 static void
 sys_create (struct intr_frame *f)
 {
-  const char* file_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (uintptr_t));
+  const char *file_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (uintptr_t));
   unsigned initial_size = *(unsigned *) read_user_ptr (
-          f->esp + 2 * sizeof (uintptr_t),sizeof (unsigned *)
-          );
+      f->esp + 2 * sizeof (uintptr_t), sizeof (unsigned *)
+  );
 
-  read_user_str(file_name);
+  read_user_str (file_name);
 
   lock_acquire (&filesys_lock);
-  bool success = filesys_create (file_name, initial_size);
+  bool success = filesys_create (file_name, initial_size, false);
   lock_release (&filesys_lock);
   f->eax = success;
 }
@@ -181,7 +186,7 @@ sys_create (struct intr_frame *f)
 static void
 sys_remove (struct intr_frame *f)
 {
-  const char* file_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (char **));
+  const char *file_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (char **));
 
   lock_acquire (&filesys_lock);
   f->eax = filesys_remove (file_name);
@@ -193,8 +198,8 @@ sys_remove (struct intr_frame *f)
 static void
 sys_open (struct intr_frame *f)
 {
-  const char* file_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (uintptr_t));
-  read_user_str(file_name);
+  const char *file_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (uintptr_t));
+  read_user_str (file_name);
 
   lock_acquire (&filesys_lock);
   struct file *file = filesys_open (file_name);
@@ -223,9 +228,9 @@ sys_open (struct intr_frame *f)
 static void
 sys_filesize (struct intr_frame *f)
 {
-  int fd = *(int32_t *) read_user_ptr (f->esp + sizeof(uintptr_t), sizeof (int));
+  int fd = *(int32_t *) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (int));
 
-  struct file *file = get_file(fd);
+  struct file *file = get_file (fd);
   if (file == NULL)
     {
       f->eax = -1;
@@ -240,11 +245,12 @@ sys_filesize (struct intr_frame *f)
     Returns the number of bytes actually read (0 at end of file),
     or -1 if the file could not be read (due to a condition other than end of file).
     Fd 0 reads from the keyboard using input_getc(). */
-static void sys_read (struct intr_frame *f)
+static void
+sys_read (struct intr_frame *f)
 {
-  int fd = *(int32_t *) read_user_ptr (f->esp + sizeof(uintptr_t), sizeof (int));
-  void *buffer = *(void **) read_user_ptr(f->esp + 2 * sizeof(uintptr_t), sizeof (void **));
-  unsigned size = *(uint32_t *) read_user_ptr (f->esp + 3 * sizeof(uintptr_t), sizeof (unsigned));
+  int fd = *(int32_t *) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (int));
+  void *buffer = *(void **) read_user_ptr (f->esp + 2 * sizeof (uintptr_t), sizeof (void **));
+  unsigned size = *(uint32_t *) read_user_ptr (f->esp + 3 * sizeof (uintptr_t), sizeof (unsigned));
 
   write_user_ptr (buffer, size);
 
@@ -253,7 +259,7 @@ static void sys_read (struct intr_frame *f)
     {
       for (int i = 0; i < size; i++)
         {
-          *(char *) buffer = input_getc();
+          *(char *) buffer = input_getc ();
           buffer += sizeof (char *);
         }
       f->eax = size;
@@ -265,7 +271,7 @@ static void sys_read (struct intr_frame *f)
     terminate_withError ();
 
   /* Read from files. */
-  struct file *file = get_file(fd);
+  struct file *file = get_file (fd);
   if (file == NULL)
     {
       f->eax = -1;
@@ -284,20 +290,23 @@ static void sys_read (struct intr_frame *f)
 }
 
 /** Writes size bytes from buffer to the open file fd.
-    Set f->eax to the number of bytes actually written.
-    Fd 1 writes to the console. */
+ *  Set f->eax to the number of bytes actually written.
+ *  Fd 1 writes to the console.
+ *
+ *  If fd represents a directory, set f->eax to -1.
+*/
 static void
 sys_write (struct intr_frame *f UNUSED)
 {
-  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof(uintptr_t)), sizeof (uint32_t *));
+  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof (uintptr_t)), sizeof (uint32_t * ));
   void *buffer = read_user_ptr (*(void **) (f->esp + 2 * sizeof (uintptr_t)), sizeof (void **));
-  uint32_t size = *(uint32_t *) read_user_ptr(f->esp + 3 * sizeof(uintptr_t), sizeof (uint32_t));
+  uint32_t size = *(uint32_t *) read_user_ptr (f->esp + 3 * sizeof (uintptr_t), sizeof (uint32_t));
 
   read_user_ptr (buffer, size);
 
   /* Write to STDIN. */
   if (fd == STDIN_FILENO)
-    terminate_withError();
+    terminate_withError ();
 
   /* Write to STDOUT. */
   if (fd == STDOUT_FILENO)
@@ -308,17 +317,26 @@ sys_write (struct intr_frame *f UNUSED)
     }
 
   /* Write to files. */
-  struct file *file = get_file(fd);
+  struct file *file = get_file (fd);
   if (file == NULL)
-  {
-    f->eax = -1;
-    return;
-  }
+    {
+      f->eax = -1;
+      return;
+    }
+
+  lock_acquire (&filesys_lock);
+
+  /* Check if file is a directory. */
+  if (inode_is_dir (file_get_inode (file)))
+    {
+      f->eax = -1;
+      lock_release (&filesys_lock);
+      return;
+    }
 
 #ifdef VM
   load_pin_pages (buffer, size);
 #endif
-  lock_acquire (&filesys_lock);
   f->eax = file_write (file, buffer, size);
   lock_release (&filesys_lock);
 #ifdef VM
@@ -331,10 +349,10 @@ sys_write (struct intr_frame *f UNUSED)
 static void
 sys_seek (struct intr_frame *f)
 {
-  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof(uintptr_t)), sizeof (uint32_t));
-  uint32_t position = *(uint32_t *) read_user_ptr ((f->esp + 2 * sizeof(uintptr_t)), sizeof (uint32_t));
+  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof (uintptr_t)), sizeof (uint32_t));
+  uint32_t position = *(uint32_t *) read_user_ptr ((f->esp + 2 * sizeof (uintptr_t)), sizeof (uint32_t));
 
-  struct file *file = get_file(fd);
+  struct file *file = get_file (fd);
   if (file == NULL)
     return;
   lock_acquire (&filesys_lock);
@@ -347,14 +365,14 @@ sys_seek (struct intr_frame *f)
 static void
 sys_tell (struct intr_frame *f)
 {
-  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof(uintptr_t)), sizeof (uint32_t *));
+  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof (uintptr_t)), sizeof (uint32_t * ));
 
   if (fd <= 1)
     {
       f->eax = -1;
       return;
     }
-  struct file *file = get_file(fd);
+  struct file *file = get_file (fd);
   if (f == NULL)
     {
       f->eax = -1;
@@ -369,7 +387,7 @@ sys_tell (struct intr_frame *f)
 static void
 sys_close (struct intr_frame *f)
 {
-  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof (uintptr_t)), sizeof (uint32_t *));
+  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof (uintptr_t)), sizeof (uint32_t * ));
   struct thread *current = thread_current ();
 
   if (fd <= 1)
@@ -378,7 +396,8 @@ sys_close (struct intr_frame *f)
   for (struct list_elem *e = list_begin (&current->file_descriptor_table);
        e != list_end (&current->file_descriptor_table); e = list_next (e))
     {
-      struct file_table_entry *fte = list_entry (e, struct file_table_entry, elem);
+      struct file_table_entry *fte = list_entry (e,
+      struct file_table_entry, elem);
       if (fte->fd == fd)
         {
           list_remove (e);
@@ -389,6 +408,108 @@ sys_close (struct intr_frame *f)
           return;
         }
     }
+}
+
+/** Changes the current working directory of the process to "dir_name". */
+static void
+sys_chdir (struct intr_frame *f)
+{
+  const char *dir_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (uintptr_t));
+  read_user_str (dir_name);
+
+  lock_acquire (&filesys_lock);
+  bool success = filesys_chdir (dir_name);
+  lock_release (&filesys_lock);
+
+  f->eax = success;
+  return;
+}
+
+/** Create a new directory. */
+static void
+sys_mkdir (struct intr_frame *f)
+{
+  const char *dir_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (uintptr_t));
+  read_user_str (dir_name);
+
+  lock_acquire (&filesys_lock);
+  bool success = filesys_create (dir_name, 0, true);
+  lock_release (&filesys_lock);
+
+  f->eax = success;
+  return;
+}
+
+/** Read a directory entry from a file descriptor, which must represent a directory.
+ *
+ * If succeed, stores the null-terminated file name in "dir_name". */
+static void
+sys_readdir (struct intr_frame *f)
+{
+  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof (uintptr_t)), sizeof (uintptr_t));
+  char *dir_name = *(const char **) read_user_ptr (f->esp + 2 * sizeof (uintptr_t), sizeof (uintptr_t));
+  write_user_ptr (dir_name, READDIR_MAX_LEN + 1);
+
+  /* Get the struct file. */
+  struct file *file = get_file (fd);
+  if (file == NULL)
+    {
+      f->eax = -1;
+      return;
+    }
+
+  lock_acquire (&filesys_lock);
+
+  /* Check if it's a directory. */
+  struct inode *inode = file_get_inode (file);
+  if (!inode_is_dir (inode))
+    {
+      lock_release (&filesys_lock);
+      f->eax = -1;
+      return;
+    }
+
+  struct dir *dir = (struct dir *) file;
+
+  f->eax = dir_readdir (dir, dir_name);
+  lock_release (&filesys_lock);
+
+  return;
+}
+
+/** Returns true if fd represents a directory, false if it represents an ordinary file. */
+static void
+sys_isdir (struct intr_frame *f)
+{
+  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof (uintptr_t)), sizeof (uintptr_t));
+  struct file *file = get_file (fd);
+  if (file == NULL)
+    {
+      f->eax = -1;
+      return;
+    }
+
+  lock_acquire (&filesys_lock);
+  f->eax = inode_is_dir (file_get_inode (file));
+  lock_release (&filesys_lock);
+
+  return;
+}
+
+/** Returns the inode number of the inode associated with fd. */
+static void
+sys_inumber (struct intr_frame *f)
+{
+  uint32_t fd = *(uint32_t *) read_user_ptr ((f->esp + sizeof (uintptr_t)), sizeof (uintptr_t));
+  struct file *file = get_file (fd);
+  if (file == NULL)
+    terminate_withError ();
+
+  lock_acquire (&filesys_lock);
+  f->eax = inode_get_inumber (file_get_inode (file));
+  lock_release (&filesys_lock);
+
+  return;
 }
 
 #ifdef VM
@@ -414,7 +535,7 @@ static void sys_mmap (struct intr_frame *f)
   /* Open file. */
   struct file *file = get_file (fd);
   if (file)
-    file = file_reopen (file);  //TODO: ???
+    file = file_reopen (file);
   if (file == NULL)
     goto SYS_MMAP_FAIL;
 
@@ -551,7 +672,7 @@ read_user_ptr (void *user_ptr, size_t size)
 
   for (size_t i = 0; i < size; i++)
     {
-      if (get_user((uint8_t *) (user_ptr + i)) == -1)
+      if (get_user ((uint8_t * ) (user_ptr + i)) == -1)
         terminate_withError ();
     }
   return (void *) user_ptr;
@@ -574,31 +695,31 @@ write_user_ptr (void *user_ptr, size_t size)
 }
 
 /** Attempt to read a pointer of string from the user. */
-static char*
-read_user_str (char* user_ptr_)
+static char *
+read_user_str (char *user_ptr_)
 {
   /* If user_ptr is not user_vaddr, exit with error. */
   if (!is_user_vaddr (user_ptr_))
     terminate_withError ();
 
-  uint8_t* user_ptr = (uint8_t *) user_ptr_;
+  uint8_t *user_ptr = (uint8_t *) user_ptr_;
 
   while (1)
-  {
-    char c = get_user (user_ptr);
-    if (c == -1)
-      terminate_withError ();
-    if (c == '\0')
-      return user_ptr_;
-    user_ptr += 1;
-  }
+    {
+      char c = get_user (user_ptr);
+      if (c == -1)
+        terminate_withError ();
+      if (c == '\0')
+        return user_ptr_;
+      user_ptr += 1;
+    }
 }
 
 /** Terminate current thread with exit_status -1. */
 static void
 terminate_withError (void)
 {
-  struct thread* cur = thread_current ();
+  struct thread *cur = thread_current ();
   if (cur != NULL)
     cur->process->exit_status = -1;
   thread_exit ();
@@ -606,7 +727,7 @@ terminate_withError (void)
 
 /** Return the file pointer by fd from file_descriptor_table.
     If fd doesn't exist, return NULL. */
-static struct file*
+static struct file *
 get_file (int fd)
 {
   if (fd <= 1)
@@ -620,7 +741,8 @@ get_file (int fd)
   for (struct list_elem *e = list_begin (&current->file_descriptor_table);
        e != list_end (&current->file_descriptor_table); e = list_next (e))
     {
-      struct file_table_entry *fte = list_entry (e, struct file_table_entry, elem);
+      struct file_table_entry *fte = list_entry (e,
+      struct file_table_entry, elem);
       if (fte->fd == fd)
         return fte->file;
     }
@@ -636,7 +758,7 @@ get_user (const uint8_t *uaddr)
 {
   int result;
   asm ("movl $1f, %0; movzbl %1, %0; 1:"
-          : "=&a" (result) : "m" (*uaddr));
+      : "=&a" (result) : "m" (*uaddr));
   return result;
 }
 
@@ -648,6 +770,6 @@ put_user (uint8_t *udst, uint8_t byte)
 {
   int error_code;
   asm ("movl $1f, %0; movb %b2, %1; 1:"
-          : "=&a" (error_code), "=m" (*udst) : "q" (byte));
+      : "=&a" (error_code), "=m" (*udst) : "q" (byte));
   return error_code != -1;
 }
