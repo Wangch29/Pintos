@@ -10,7 +10,7 @@
 #define ROOT_DIR_SECTOR 1       /**< Root directory file inode sector. */
 
 /** File system lock. */
-struct lock filesys_lock;
+//struct lock filesys_lock;
 
 /** Block device that contains the file system. */
 struct block *fs_device;

@@ -173,9 +173,9 @@ sys_create (struct intr_frame *f)
 
   read_user_str (file_name);
 
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   bool success = filesys_create (file_name, initial_size, false);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
   f->eax = success;
 }
 
@@ -188,9 +188,9 @@ sys_remove (struct intr_frame *f)
 {
   const char *file_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (char **));
 
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   f->eax = filesys_remove (file_name);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 }
 
 /** Opens the file called file.
@@ -201,9 +201,9 @@ sys_open (struct intr_frame *f)
   const char *file_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (uintptr_t));
   read_user_str (file_name);
 
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   struct file *file = filesys_open (file_name);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
   /* If there is no such a file. */
   if (file == NULL)
     {
@@ -236,9 +236,9 @@ sys_filesize (struct intr_frame *f)
       f->eax = -1;
       return;
     }
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   f->eax = file_length (file);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 }
 
 /** Reads size bytes from the file open as fd into buffer.
@@ -281,9 +281,9 @@ sys_read (struct intr_frame *f)
 #ifdef VM
   load_pin_pages (buffer, size);
 #endif
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   f->eax = file_read (file, buffer, size);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 #ifdef VM
   unpin_pages (buffer, size);
 #endif
@@ -324,13 +324,13 @@ sys_write (struct intr_frame *f UNUSED)
       return;
     }
 
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
 
   /* Check if file is a directory. */
   if (inode_is_dir (file_get_inode (file)))
     {
       f->eax = -1;
-      lock_release (&filesys_lock);
+      //lock_release (&filesys_lock);
       return;
     }
 
@@ -338,7 +338,7 @@ sys_write (struct intr_frame *f UNUSED)
   load_pin_pages (buffer, size);
 #endif
   f->eax = file_write (file, buffer, size);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 #ifdef VM
   unpin_pages (buffer, size);
 #endif
@@ -355,9 +355,9 @@ sys_seek (struct intr_frame *f)
   struct file *file = get_file (fd);
   if (file == NULL)
     return;
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   file_seek (file, position);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 }
 
 /** Returns the position of the next byte to be read or written in open file fd,
@@ -378,9 +378,9 @@ sys_tell (struct intr_frame *f)
       f->eax = -1;
       return;
     }
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   f->eax = file_tell (file);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 }
 
 /** Closes file descriptor fd. */
@@ -401,9 +401,9 @@ sys_close (struct intr_frame *f)
       if (fte->fd == fd)
         {
           list_remove (e);
-          lock_acquire (&filesys_lock);
+          //lock_acquire (&filesys_lock);
           file_close (fte->file);
-          lock_release (&filesys_lock);
+          //lock_release (&filesys_lock);
           free (fte);
           return;
         }
@@ -417,9 +417,9 @@ sys_chdir (struct intr_frame *f)
   const char *dir_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (uintptr_t));
   read_user_str (dir_name);
 
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   bool success = filesys_chdir (dir_name);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 
   f->eax = success;
   return;
@@ -432,9 +432,9 @@ sys_mkdir (struct intr_frame *f)
   const char *dir_name = *(const char **) read_user_ptr (f->esp + sizeof (uintptr_t), sizeof (uintptr_t));
   read_user_str (dir_name);
 
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   bool success = filesys_create (dir_name, 0, true);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 
   f->eax = success;
   return;
@@ -458,13 +458,13 @@ sys_readdir (struct intr_frame *f)
       return;
     }
 
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
 
   /* Check if it's a directory. */
   struct inode *inode = file_get_inode (file);
   if (!inode_is_dir (inode))
     {
-      lock_release (&filesys_lock);
+      //lock_release (&filesys_lock);
       f->eax = -1;
       return;
     }
@@ -472,7 +472,7 @@ sys_readdir (struct intr_frame *f)
   struct dir *dir = (struct dir *) file;
 
   f->eax = dir_readdir (dir, dir_name);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 
   return;
 }
@@ -489,9 +489,9 @@ sys_isdir (struct intr_frame *f)
       return;
     }
 
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   f->eax = inode_is_dir (file_get_inode (file));
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 
   return;
 }
@@ -505,9 +505,9 @@ sys_inumber (struct intr_frame *f)
   if (file == NULL)
     terminate_withError ();
 
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   f->eax = inode_get_inumber (file_get_inode (file));
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 
   return;
 }
@@ -528,7 +528,7 @@ static void sys_mmap (struct intr_frame *f)
       return;
     }
 
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
 
   struct thread* cur = thread_current ();
 
@@ -579,12 +579,12 @@ static void sys_mmap (struct intr_frame *f)
   list_push_back (&cur->mmap_table, &mte->elem);
 
   /* Mapping succeeds. */
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
   f->eax = new_id;
   return;
 
 SYS_MMAP_FAIL:
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
   f->eax = -1;
   return;
 }
@@ -607,7 +607,7 @@ static void sys_munmap (struct intr_frame *f)
       if (mte->map_id == map_id)
       /* Found the map_id, and start to unmap. */
         {
-          lock_acquire (&filesys_lock);
+          //lock_acquire (&filesys_lock);
 
           size_t filesize = file_length (mte->file);
           for (size_t offset = 0; offset < filesize; offset += PGSIZE)
@@ -621,7 +621,7 @@ static void sys_munmap (struct intr_frame *f)
           file_close (mte->file);
           free (mte);
 
-          lock_release (&filesys_lock);
+          //lock_release (&filesys_lock);
           return;
         }
     }

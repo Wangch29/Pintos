@@ -138,9 +138,9 @@ start_process (void *process_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
 
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   success = load (file_name, &if_.eip, &if_.esp);
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
   /* If load failed, quit. */
   if (!success)
     {
@@ -286,14 +286,14 @@ process_exit (void)
   /* Close executing file. */
   if (cur->execute_file)
     {
-      lock_acquire (&filesys_lock);
+      //lock_acquire (&filesys_lock);
       file_allow_write (cur->execute_file);
       file_close (cur->execute_file);
-      lock_release (&filesys_lock);
+      //lock_release (&filesys_lock);
     }
 
   /* Close file_descriptor_table */
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   while (!list_empty (&cur->file_descriptor_table))
     {
       struct list_elem *e = list_pop_front (&cur->file_descriptor_table);
@@ -302,12 +302,12 @@ process_exit (void)
       file_close (fte->file);
       free (fte);
     }
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 
 #ifdef VM
   /* Close memory-mapped files. */
   struct list *mmap_list = &cur->mmap_table;
-  lock_acquire (&filesys_lock);
+  //lock_acquire (&filesys_lock);
   while (!list_empty (mmap_list))
     {
       struct list_elem *e = list_begin (mmap_list);
@@ -326,7 +326,7 @@ process_exit (void)
       file_close (mte->file);
       free (mte);
     }
-  lock_release (&filesys_lock);
+  //lock_release (&filesys_lock);
 #endif
 
   /* Close cwd. */

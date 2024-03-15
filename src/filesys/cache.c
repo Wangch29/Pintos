@@ -30,27 +30,29 @@
  */
 struct cache_block_entry
   {
-    block_sector_t sector_idx;         /**< Sector index in disk. */
+    block_sector_t sector_idx;         /**< Sector index in disk.        */
 
-    bool valid;                        /**< Entry validity.       */
-    bool dirty;                        /**< Entry dirty.          */
-    bool used;                         /**< Used recently.        */
+    bool valid;                        /**< Entry validity.              */
+    bool dirty;                        /**< Entry dirty bit.             */
+    bool used;                         /**< Used recently.               */
 
-    struct lock entry_lock;            /**< */
-    struct condition read_possible;    /**< */
-    struct condition write_possible;    /**< */
-    struct condition safe_to_evict;        /**< */
-    int readers;
-    int writers;
-    int waiting_writers;
+    /* Sync. */
+    struct lock entry_lock;            /**< Per entry lock.              */
+    struct condition read_possible;    /**< Read condition variable.     */
+    struct condition write_possible;   /**< Write condition variable.    */
+    struct condition safe_to_evict;    /**< Eviction condition variable. */
+    int readers;                       /**< Number of readers.           */
+    int writers;                       /**< Number of writers.           */
+    int waiting_readers;               /**< Number of waiting readers.   */
+    int waiting_writers;               /**< Number of waiting writers.   */
 
-    uint8_t data[BLOCK_SECTOR_SIZE];   /**< Sector data.          */
+    uint8_t data[BLOCK_SECTOR_SIZE];   /**< Sector data.                 */
   };
 
 /** Cache blocks array. */
 static struct cache_block_entry cache_array[CACHE_BLOCK_NUMBER];
 
-/** Buffer cache lock. */
+/** Buffer cache global lock. */
 static struct lock buffer_cache_lock;
 
 /** Clock algorithm index in cache_array, for LRU. */
@@ -82,6 +84,7 @@ cache_init (void)
       cond_init (&cache_array[i].safe_to_evict);
       cache_array[i].readers = 0;
       cache_array[i].writers = 0;
+      cache_array[i].waiting_readers = 0;
       cache_array[i].waiting_writers = 0;
       cache_array[i].valid = false;
     }
@@ -115,9 +118,11 @@ cache_read (block_sector_t sector, void *buffer, int sector_ofs, int chunk_size)
 
   lock_acquire (&entry->entry_lock);
   lock_release (&buffer_cache_lock);
+  entry->waiting_readers++;
   /* Wait while a writer is writing or waiting to write. */
   while (entry->writers > 0 || entry->waiting_writers > 0)
     cond_wait (&entry->read_possible, &entry->entry_lock);
+  entry->waiting_readers--;
   entry->readers++;
   lock_release (&entry->entry_lock);
 
@@ -180,7 +185,7 @@ cache_write (block_sector_t sector, void *buffer, int sector_ofs, int chunk_size
 
   if (entry->waiting_writers > 0)
     cond_signal (&entry->write_possible, &entry->entry_lock);
-  else if (entry->readers > 0)
+  else if (entry->waiting_readers > 0)
     cond_broadcast (&entry->read_possible, &entry->entry_lock);
   else
     cond_signal (&entry->safe_to_evict, &entry->entry_lock);
